@@ -27,16 +27,21 @@ const programs = ref<GlobalProgram[]>([])
 const scholarships = ref<GlobalScholarship[]>([])
 const loading = ref(true)
 
+function getCountryName(c?: string | { name: string } | null): string {
+  if (!c) return 'Internasional'
+  return typeof c === 'string' ? c : c.name
+}
+
 onMounted(async () => {
   try {
     const [layoutRes, progRes, schRes] = await Promise.all([
       apiRequest<HomeLayoutConfig>({ method: 'GET', url: '/app/home-layout' }),
-      apiRequest<{ items: GlobalProgram[] }>({ method: 'GET', url: '/global/programs' }),
-      apiRequest<{ items: GlobalScholarship[] }>({ method: 'GET', url: '/global/scholarships' }),
+      apiRequest<{ items: GlobalProgram[] } | GlobalProgram[]>({ method: 'GET', url: '/global/programs' }),
+      apiRequest<{ items: GlobalScholarship[] } | GlobalScholarship[]>({ method: 'GET', url: '/global/scholarships' }),
     ])
     layout.value = layoutRes
-    programs.value = progRes.items ?? []
-    scholarships.value = schRes.items ?? []
+    programs.value = Array.isArray(progRes) ? progRes : progRes.items ?? []
+    scholarships.value = Array.isArray(schRes) ? schRes : schRes.items ?? []
   } finally {
     loading.value = false
   }
@@ -269,12 +274,14 @@ onMounted(async () => {
           >
             <div class="flex items-center justify-between mb-2">
               <span class="rounded-full bg-primary-50 px-2.5 py-0.5 text-xs font-semibold text-primary">
-                {{ prog.category }}
+                {{ prog.category || prog.targetAudience || 'Program Global' }}
               </span>
-              <span class="text-xs text-slate-500">{{ prog.duration }} • {{ prog.destination }}</span>
+              <span class="text-xs text-slate-500">
+                {{ prog.quota ? `Kuota ${prog.quota} Siswa` : [prog.duration, prog.destination].filter(Boolean).join(' • ') }}
+              </span>
             </div>
             <h4 class="text-base font-bold text-slate-900 mb-1">{{ prog.title }}</h4>
-            <p class="text-xs text-slate-600 leading-relaxed">{{ prog.summary }}</p>
+            <p class="text-xs text-slate-600 leading-relaxed line-clamp-2">{{ prog.description || prog.summary }}</p>
           </router-link>
         </div>
       </section>
@@ -300,18 +307,22 @@ onMounted(async () => {
               <span
                 :class="[
                   'rounded-full px-2.5 py-0.5 text-[11px] font-bold',
-                  sch.coverage === 'Full'
+                  (sch.fundingType || sch.coverage)?.toUpperCase() === 'FULL'
                     ? 'bg-emerald-50 text-emerald-700'
                     : 'bg-sky-50 text-sky-700',
                 ]"
               >
-                {{ sch.coverage }} Funded
+                {{ (sch.fundingType || sch.coverage)?.toUpperCase() === 'FULL' ? 'Beasiswa Penuh' : 'Beasiswa Parsial' }}
               </span>
-              <span class="text-[11px] text-slate-500">Deadline: {{ sch.deadline }}</span>
+              <span v-if="sch.deadline" class="text-[11px] text-slate-500">
+                Batas: {{ new Date(sch.deadline).toLocaleDateString('id-ID') }}
+              </span>
             </div>
-            <h4 class="text-sm font-bold text-slate-900 mb-1">{{ sch.title }}</h4>
-            <p class="text-xs text-slate-500 mb-2">{{ sch.provider }} • {{ sch.country }}</p>
-            <p class="text-xs text-slate-600 line-clamp-2">{{ sch.description }}</p>
+            <h4 class="text-sm font-bold text-slate-900 mb-1">{{ sch.name || sch.title }}</h4>
+            <p class="text-xs font-medium text-primary mb-2">
+              {{ [sch.provider, getCountryName(sch.country)].filter(Boolean).join(' • ') }}
+            </p>
+            <p class="text-xs text-slate-600 line-clamp-2">{{ sch.description || sch.eligibility }}</p>
           </div>
         </div>
       </section>

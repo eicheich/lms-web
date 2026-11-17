@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { Blocks, Plus, CheckCircle2 } from 'lucide-vue-next'
 import { apiRequest } from '@/services/api'
 import SduiRenderer from '@/components/sdui/SduiRenderer.vue'
 import type { ContentBlock, GlobalProgram, SduiBlockType } from '@/types/api'
+
+const route = useRoute()
 
 const programs = ref<GlobalProgram[]>([])
 const selectedProgramId = ref('')
@@ -40,9 +43,11 @@ onMounted(async () => {
       method: 'GET',
       url: '/global/programs',
     })
-    programs.value = res.items ?? []
+    programs.value = Array.isArray(res) ? res : res.items ?? []
+    const queryProgramId = typeof route.query.programId === 'string' ? route.query.programId : ''
     if (programs.value.length > 0) {
-      selectedProgramId.value = programs.value[0].id
+      const matched = programs.value.find((p) => p.id === queryProgramId)
+      selectedProgramId.value = matched ? matched.id : programs.value[0].id
       await loadBlocks(selectedProgramId.value)
     }
   } finally {
