@@ -9,14 +9,21 @@ import {
   Sparkles,
   ArrowRight,
   GraduationCap,
+  CalendarCheck,
+  School,
+  Users,
 } from 'lucide-vue-next'
 import { apiRequest } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useTenantStore } from '@/stores/tenant'
 import type {
+  AttendanceSummary,
+  CbtExam,
+  Course,
   GlobalProgram,
   GlobalScholarship,
   HomeLayoutConfig,
+  SchoolClass,
 } from '@/types/api'
 
 const authStore = useAuthStore()
@@ -25,6 +32,10 @@ const tenantStore = useTenantStore()
 const layout = ref<HomeLayoutConfig | null>(null)
 const programs = ref<GlobalProgram[]>([])
 const scholarships = ref<GlobalScholarship[]>([])
+const attendanceSummary = ref<AttendanceSummary | null>(null)
+const schoolClasses = ref<SchoolClass[]>([])
+const activeCourses = ref<Course[]>([])
+const cbtExams = ref<CbtExam[]>([])
 const loading = ref(true)
 
 function getCountryName(c?: string | { name: string } | null): string {
@@ -34,14 +45,38 @@ function getCountryName(c?: string | { name: string } | null): string {
 
 onMounted(async () => {
   try {
-    const [layoutRes, progRes, schRes] = await Promise.all([
+    const basePromises = Promise.all([
       apiRequest<HomeLayoutConfig>({ method: 'GET', url: '/app/home-layout' }),
       apiRequest<{ items: GlobalProgram[] } | GlobalProgram[]>({ method: 'GET', url: '/global/programs' }),
       apiRequest<{ items: GlobalScholarship[] } | GlobalScholarship[]>({ method: 'GET', url: '/global/scholarships' }),
     ])
+
+    const execPromises = authStore.isSchoolExecutive
+      ? Promise.all([
+          apiRequest<AttendanceSummary>({ method: 'GET', url: '/attendance/summary' }).catch(() => null),
+          apiRequest<SchoolClass[]>({ method: 'GET', url: '/academic/classes' }).catch(() => []),
+          apiRequest<Course[]>({ method: 'GET', url: '/lms/courses' }).catch(() => []),
+          apiRequest<CbtExam[]>({ method: 'GET', url: '/cbt/exams' }).catch(() => []),
+        ])
+      : Promise.resolve<[AttendanceSummary | null, SchoolClass[], Course[], CbtExam[]]>([
+          null,
+          [],
+          [],
+          [],
+        ])
+
+    const [[layoutRes, progRes, schRes], [attSum, clsList, crsList, exmList]] = await Promise.all([
+      basePromises,
+      execPromises,
+    ])
+
     layout.value = layoutRes
     programs.value = Array.isArray(progRes) ? progRes : progRes.items ?? []
     scholarships.value = Array.isArray(schRes) ? schRes : schRes.items ?? []
+    attendanceSummary.value = attSum
+    schoolClasses.value = clsList
+    activeCourses.value = crsList
+    cbtExams.value = exmList
   } finally {
     loading.value = false
   }
@@ -191,6 +226,147 @@ onMounted(async () => {
     <div v-if="loading" class="py-12 text-center text-sm text-slate-500">
       Memuat tata letak beranda dinamis...
     </div>
+
+    <!-- Executive Overview for PRINCIPAL / SCHOOL_ADMIN / SUPER_OWNER -->
+    <section v-if="!loading && authStore.isSchoolExecutive" class="space-y-5">
+      <!-- 4 KPI Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-slate-500">Tingkat Kehadiran</span>
+            <div class="h-8 w-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <CalendarCheck class="h-4 w-4" />
+            </div>
+          </div>
+          <p class="text-2xl font-extrabold text-slate-900">
+            {{ attendanceSummary ? `${attendanceSummary.attendanceRate}%` : '—' }}
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            {{ attendanceSummary ? `${attendanceSummary.present} Hadir • ${attendanceSummary.late} Terlambat` : 'Data presensi sekolah' }}
+          </p>
+        </div>
+
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-slate-500">Rombongan Belajar</span>
+            <div class="h-8 w-8 rounded-lg bg-primary-50 text-primary flex items-center justify-center">
+              <School class="h-4 w-4" />
+            </div>
+          </div>
+          <p class="text-2xl font-extrabold text-slate-900">{{ schoolClasses.length }}</p>
+          <p class="text-[11px] text-slate-500 mt-1">Kelas aktif terdaftar</p>
+        </div>
+
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-slate-500">Kursus & Mapel (LMS)</span>
+            <div class="h-8 w-8 rounded-lg bg-secondary-50 text-secondary flex items-center justify-center">
+              <BookOpen class="h-4 w-4" />
+            </div>
+          </div>
+          <p class="text-2xl font-extrabold text-slate-900">{{ activeCourses.length }}</p>
+          <p class="text-[11px] text-slate-500 mt-1">Mata pelajaran aktif</p>
+        </div>
+
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-slate-500">Jadwal Ujian CBT</span>
+            <div class="h-8 w-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+              <ClipboardCheck class="h-4 w-4" />
+            </div>
+          </div>
+          <p class="text-2xl font-extrabold text-slate-900">{{ cbtExams.length }}</p>
+          <p class="text-[11px] text-slate-500 mt-1">Ujian terjadwal & aktif</p>
+        </div>
+      </div>
+
+      <!-- Attendance Pulse & Class Overview -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <!-- Attendance Breakdown -->
+        <div class="lg:col-span-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold text-slate-900">Rekap Kehadiran Sekolah</h3>
+            <router-link to="/attendance" class="text-xs font-semibold text-primary hover:underline">
+              Detail →
+            </router-link>
+          </div>
+          <div v-if="attendanceSummary && attendanceSummary.total > 0" class="space-y-3">
+            <div class="h-3 w-full rounded-full bg-slate-100 overflow-hidden flex">
+              <div
+                class="bg-emerald-500 h-full"
+                :style="{ width: `${(attendanceSummary.present / attendanceSummary.total) * 100}%` }"
+                title="Hadir"
+              />
+              <div
+                class="bg-amber-400 h-full"
+                :style="{ width: `${(attendanceSummary.late / attendanceSummary.total) * 100}%` }"
+                title="Terlambat"
+              />
+              <div
+                class="bg-sky-400 h-full"
+                :style="{ width: `${((attendanceSummary.sick + attendanceSummary.permit) / attendanceSummary.total) * 100}%` }"
+                title="Sakit / Izin"
+              />
+              <div
+                class="bg-red-500 h-full"
+                :style="{ width: `${(attendanceSummary.absent / attendanceSummary.total) * 100}%` }"
+                title="Alfa"
+              />
+            </div>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div class="flex items-center justify-between rounded-lg bg-emerald-50 px-3 py-2">
+                <span class="text-emerald-800 font-medium">Hadir</span>
+                <span class="font-bold text-emerald-700">{{ attendanceSummary.present }}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg bg-amber-50 px-3 py-2">
+                <span class="text-amber-800 font-medium">Terlambat</span>
+                <span class="font-bold text-amber-700">{{ attendanceSummary.late }}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg bg-sky-50 px-3 py-2">
+                <span class="text-sky-800 font-medium">Sakit / Izin</span>
+                <span class="font-bold text-sky-700">{{ attendanceSummary.sick + attendanceSummary.permit }}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg bg-red-50 px-3 py-2">
+                <span class="text-red-800 font-medium">Alfa</span>
+                <span class="font-bold text-red-700">{{ attendanceSummary.absent }}</span>
+              </div>
+            </div>
+          </div>
+          <p v-else class="text-xs text-slate-500 py-4">
+            Belum ada catatan presensi siswa yang tercatat.
+          </p>
+        </div>
+
+        <!-- Classes & CBT Summary -->
+        <div class="lg:col-span-7 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold text-slate-900">Ringkasan Kelas & Rombongan Belajar</h3>
+            <router-link to="/academic/classes" class="text-xs font-semibold text-primary hover:underline">
+              Lihat Semua →
+            </router-link>
+          </div>
+          <div v-if="schoolClasses.length > 0" class="divide-y divide-slate-100">
+            <div
+              v-for="cls in schoolClasses.slice(0, 4)"
+              :key="cls.id"
+              class="py-2.5 flex items-center justify-between gap-3 text-xs"
+            >
+              <div>
+                <p class="font-bold text-slate-900">{{ cls.name }} <span class="font-normal text-slate-500">(Tingkat {{ cls.gradeLevel }})</span></p>
+                <p class="text-slate-500">Wali Kelas: {{ cls.homeroomTeacherName || 'Belum ditentukan' }}</p>
+              </div>
+              <span class="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 font-semibold text-slate-700 shrink-0">
+                <Users class="h-3.5 w-3.5 text-primary" />
+                {{ cls.studentCount ?? 0 }} Siswa
+              </span>
+            </div>
+          </div>
+          <p v-else class="text-xs text-slate-500 py-4">
+            Belum ada kelas aktif yang terdaftar.
+          </p>
+        </div>
+      </div>
+    </section>
 
     <!-- Dynamic Home Blocks ordered by /v1/app/home-layout -->
     <template v-else-if="layout" v-for="block in layout.homeBlocks" :key="block">
