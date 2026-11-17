@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { ClipboardCheck, Clock, Eye, Play, Plus, Shuffle, X } from 'lucide-vue-next'
 import { apiRequest, isModuleLockedError } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
 import LockedModuleBanner from '@/components/common/LockedModuleBanner.vue'
-import type { CbtExam, Question, QuestionBank } from '@/types/api'
+import type { CbtExam, Course, Question, QuestionBank } from '@/types/api'
 
 const authStore = useAuthStore()
+const toast = useToast()
 
 const exams = ref<CbtExam[]>([])
+const courses = ref<Course[]>([])
 const banks = ref<QuestionBank[]>([])
+const selectedBankId = ref('')
 const availableQuestions = ref<Question[]>([])
 const moduleLocked = ref(false)
 const showCreateModal = ref(false)
@@ -17,25 +21,48 @@ const previewExam = ref<CbtExam | null>(null)
 const loadingPreview = ref(false)
 
 const form = reactive({
+  courseId: '',
   title: '',
   durationMinutes: 60,
   passingScore: 75,
+  startDate: new Date().toISOString().slice(0, 10),
+  endDate: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
   isRandomized: true,
   questionIds: [] as string[],
 })
+
+async function loadBankQuestions(bankId: string) {
+  if (!bankId) {
+    availableQuestions.value = []
+    form.questionIds = []
+    return
+  }
+  availableQuestions.value = await apiRequest<Question[]>({
+    method: 'GET',
+    url: `/cbt/question-banks/${bankId}/questions`,
+  })
+  form.questionIds = availableQuestions.value.map((q) => q.id)
+}
+
+watch(selectedBankId, loadBankQuestions)
 
 async function loadExams() {
   moduleLocked.value = false
   try {
     exams.value = await apiRequest<CbtExam[]>({ method: 'GET', url: '/cbt/exams' })
     if (authStore.isTeacher) {
-      banks.value = await apiRequest<QuestionBank[]>({ method: 'GET', url: '/cbt/question-banks' })
-      if (banks.value.length > 0) {
-        availableQuestions.value = await apiRequest<Question[]>({
-          method: 'GET',
-          url: `/cbt/question-banks/${banks.value[0].id}/questions`,
-        })
-        form.questionIds = availableQuestions.value.map((q) => q.id)
+      const [bankRes, courseRes] = await Promise.all([
+        apiRequest<QuestionBank[]>({ method: 'GET', url: '/cbt/question-banks' }),
+        apiRequest<Course[]>({ method: 'GET', url: '/lms/courses' }).catch(() => []),
+      ])
+      banks.value = bankRes
+      courses.value = courseRes
+      if (courses.value.length > 0 && !form.courseId) {
+        form.courseId = courses.value[0].id
+      }
+      if (banks.value.length > 0 && !selectedBankId.value) {
+        selectedBankId.value = banks.value[0].id
+        await loadBankQuestions(selectedBankId.value)
       }
     }
   } catch (err) {
@@ -59,24 +86,32 @@ async function openPreviewModal(examId: string) {
 }
 
 async function createExam() {
-  const now = new Date()
-  const end = new Date(now.getTime() + 14 * 86400000)
-  await apiRequest<CbtExam>({
-    method: 'POST',
-    url: '/cbt/exams',
-    data: {
-      title: form.title,
-      durationMinutes: Number(form.durationMinutes),
-      startTime: now.toISOString(),
-      endTime: end.toISOString(),
-      passingScore: Number(form.passingScore),
-      isRandomized: form.isRandomized,
-      questionIds: form.questionIds,
-    },
-  })
-  showCreateModal.value = false
-  form.title = ''
-  await loadExams()
+  if (form.questionIds.length === 0) {
+    toast.error('Pilih minimal 1 butir soal untuk ujian ini')
+    return
+  }
+  try {
+    await apiRequest<CbtExam>({
+      method: 'POST',
+      url: '/cbt/exams',
+      data: {
+        courseId: form.courseId || undefined,
+        title: form.title,
+        durationMinutes: Number(form.durationMinutes),
+        startTime: `${form.startDate}T00:00:00Z`,
+        endTime: `${form.endDate}T23:59:59Z`,
+        passingScore: Number(form.passingScore),
+        isRandomized: form.isRandomized,
+        questionIds: form.questionIds,
+      },
+    })
+    showCreateModal.value = false
+    form.title = ''
+    toast.success('Jadwal ujian CBT berhasil dibuat!')
+    await loadExams()
+  } catch {
+    toast.error('Gagal menjadwalkan ujian CBT')
+  }
 }
 
 onMounted(() => {
@@ -135,7 +170,8 @@ onMounted(() => {
 
         <div class="pt-4 border-t border-slate-100 flex items-center justify-between">
           <span class="text-xs text-slate-400">
-            {{ exam.questionIds?.length ?? 0 }} Butir Soal
+            {{ new Date(exam.startTime).toLocaleDateString('id-ID') }} –
+            {{ new Date(exam.endTime).toLocaleDateString('id-ID') }}
           </span>
           <router-link
             v-if="authStore.isStudent"
@@ -164,7 +200,7 @@ onMounted(() => {
       v-if="showCreateModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
     >
-      <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+      <div class="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl space-y-4">
         <div class="flex items-center justify-between">
           <h3 class="text-base font-bold text-slate-900">Jadwalkan Ujian CBT</h3>
           <button @click="showCreateModal = false" class="text-slate-400 hover:text-slate-600">
@@ -173,6 +209,15 @@ onMounted(() => {
         </div>
 
         <form @submit.prevent="createExam" class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Mata Pelajaran (Untuk Integrasi Rapor)</label>
+            <select v-model="form.courseId" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+              <option value="">-- Opsional / Ujian Umum --</option>
+              <option v-for="c in courses" :key="c.id" :value="c.id">
+                {{ c.name }} ({{ c.code }})
+              </option>
+            </select>
+          </div>
           <div>
             <label class="block text-xs font-semibold text-slate-700 mb-1">Judul Ujian</label>
             <input
@@ -193,6 +238,40 @@ onMounted(() => {
               <input v-model.number="form.passingScore" type="number" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
             </div>
           </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Tanggal Mulai</label>
+              <input v-model="form.startDate" type="date" required class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Tanggal Selesai</label>
+              <input v-model="form.endDate" type="date" required class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Sumber Bank Soal</label>
+            <select v-model="selectedBankId" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+              <option v-for="b in banks" :key="b.id" :value="b.id">{{ b.title }} ({{ b.subject }})</option>
+            </select>
+          </div>
+
+          <div v-if="availableQuestions.length > 0" class="space-y-1.5">
+            <label class="block text-xs font-semibold text-slate-700">
+              Pilih Butir Soal ({{ form.questionIds.length }}/{{ availableQuestions.length }} dipilih)
+            </label>
+            <div class="max-h-40 overflow-y-auto rounded-xl border border-slate-200 p-2.5 space-y-1.5 bg-slate-50">
+              <label
+                v-for="(q, idx) in availableQuestions"
+                :key="q.id"
+                class="flex items-start gap-2 text-xs text-slate-700 cursor-pointer"
+              >
+                <input v-model="form.questionIds" :value="q.id" type="checkbox" class="mt-0.5 accent-primary" />
+                <span class="line-clamp-1">{{ idx + 1 }}. {{ q.prompt }}</span>
+              </label>
+            </div>
+          </div>
+
           <label class="flex items-center gap-2 text-xs font-medium text-slate-700 pt-1">
             <input v-model="form.isRandomized" type="checkbox" class="accent-primary" />
             Acak urutan soal untuk setiap siswa

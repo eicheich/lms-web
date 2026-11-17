@@ -261,7 +261,7 @@ export interface CreateCourseDto {
   teacherId?: string
 }
 
-export type MaterialContentType = 'TEXT' | 'VIDEO' | 'PDF' | 'LINK'
+export type MaterialContentType = 'TEXT' | 'VIDEO_URL' | 'PDF_URL' | 'LINK' | 'VIDEO' | 'PDF'
 
 export interface Material {
   id: string
@@ -289,7 +289,7 @@ export interface Assignment {
   description: string
   dueDate: string
   maxScore: number
-  submissionType: 'TEXT' | 'FILE' | 'BOTH'
+  submissionType: 'TEXT' | 'FILE' | 'LINK'
 }
 
 export interface CreateAssignmentDto {
@@ -297,7 +297,7 @@ export interface CreateAssignmentDto {
   description: string
   dueDate: string
   maxScore: number
-  submissionType: 'TEXT' | 'FILE' | 'BOTH'
+  submissionType: 'TEXT' | 'FILE' | 'LINK'
 }
 
 export interface SubmitAssignmentDto {
@@ -309,14 +309,14 @@ export interface Submission {
   id: string
   assignmentId: string
   studentId: string
-  studentName: string
+  studentName?: string
   studentEmail?: string
   content?: string
   fileUrl?: string
   submittedAt: string
   score?: number | null
   feedback?: string | null
-  status: 'SUBMITTED' | 'GRADED'
+  status: 'SUBMITTED' | 'GRADED' | 'LATE'
 }
 
 export interface GradeSubmissionDto {
@@ -401,11 +401,27 @@ export interface SubmitCbtAttemptDto {
 }
 
 export interface SubmitCbtAttemptResponse {
-  attemptId: string
+  id?: string
+  attemptId?: string
+  score?: number
+  rawScore?: number
+  finalScore?: number
+  maxScore?: number
+  passed?: boolean
+  submittedAt?: string
+  finishedAt?: string
+}
+
+export interface GradeRecord {
+  id: string
+  studentId: string
+  courseId: string
+  componentType: 'ASSIGNMENT' | 'EXAM' | 'PROJECT'
+  componentId: string
   score: number
   maxScore: number
-  passed: boolean
-  submittedAt: string
+  weight: number
+  recordedAt: string
 }
 
 export interface StudentGradeItem {

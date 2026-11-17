@@ -19,7 +19,15 @@ import { useToast } from '@/composables/useToast'
 import LockedModuleBanner from '@/components/common/LockedModuleBanner.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import SkeletonCard from '@/components/common/SkeletonCard.vue'
-import type { Assignment, Course, Material, MaterialContentType, Submission } from '@/types/api'
+import type {
+  Assignment,
+  ClassStudentsResponse,
+  Course,
+  Material,
+  MaterialContentType,
+  SchoolClass,
+  Submission,
+} from '@/types/api'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -39,6 +47,8 @@ const assignments = ref<Assignment[]>([])
 const selectedAssignmentId = ref('')
 const submissions = ref<Submission[]>([])
 const selectedSubmission = ref<Submission | null>(null)
+const studentNameMap = ref<Record<string, string>>({})
+const submittedMap = ref<Record<string, Submission>>({})
 
 const loading = ref(true)
 const moduleLocked = ref(false)
@@ -55,9 +65,9 @@ const newMaterial = reactive({
 const newAssignment = reactive({
   title: '',
   description: '',
-  dueDate: '2026-11-30T23:59:59Z',
+  dueDate: '2026-11-30',
   maxScore: 100,
-  submissionType: 'TEXT' as 'TEXT' | 'FILE' | 'BOTH',
+  submissionType: 'TEXT' as 'TEXT' | 'FILE' | 'LINK',
 })
 
 const studentSubmission = reactive({
@@ -96,12 +106,48 @@ async function loadCourseData() {
   }
 }
 
+async function loadStudentNames() {
+  if (!authStore.isTeacher) return
+  try {
+    const classes = await apiRequest<SchoolClass[]>({ method: 'GET', url: '/academic/classes' })
+    const map: Record<string, string> = {}
+    await Promise.all(
+      classes.map(async (cls) => {
+        try {
+          const detail = await apiRequest<ClassStudentsResponse>({
+            method: 'GET',
+            url: `/academic/classes/${cls.id}/students`,
+          })
+          detail.students.forEach((s) => {
+            map[s.studentId] = s.fullName
+          })
+        } catch {
+          // ignore
+        }
+      }),
+    )
+    studentNameMap.value = map
+  } catch {
+    // ignore
+  }
+}
+
 async function loadSubmissions(assignmentId: string) {
   if (!assignmentId || !authStore.isTeacher) return
-  submissions.value = await apiRequest<Submission[]>({
+  if (Object.keys(studentNameMap.value).length === 0) {
+    await loadStudentNames()
+  }
+  const raw = await apiRequest<Submission[]>({
     method: 'GET',
     url: `/lms/assignments/${assignmentId}/submissions`,
   })
+  submissions.value = raw.map((sub) => ({
+    ...sub,
+    studentName:
+      sub.studentName ||
+      studentNameMap.value[sub.studentId] ||
+      `Siswa (${sub.studentId.slice(0, 8)})`,
+  }))
   if (submissions.value.length > 0) {
     selectSubmission(submissions.value[0])
   } else {
@@ -133,7 +179,10 @@ async function addMaterial() {
       method: 'POST',
       url: `/lms/courses/${courseId}/materials`,
       data: {
-        ...newMaterial,
+        title: newMaterial.title,
+        contentType: newMaterial.contentType,
+        contentBody: newMaterial.contentBody.trim() || undefined,
+        fileUrl: newMaterial.fileUrl.trim() || undefined,
         sortOrder: materials.value.length + 1,
       },
     })
@@ -143,16 +192,22 @@ async function addMaterial() {
     toast.success('Materi pembelajaran berhasil ditambahkan!')
     await loadCourseData()
   } catch {
-    toast.error('Gagal menambahkan materi pembelajaran')
+    toast.error('Gagal menambahkan materi pembelajaran. Pastikan URL valid jika diisi.')
   }
 }
 
 async function addAssignment() {
   try {
+    const isoDue = newAssignment.dueDate.includes('T')
+      ? newAssignment.dueDate
+      : `${newAssignment.dueDate}T23:59:59Z`
     await apiRequest<Assignment>({
       method: 'POST',
       url: `/lms/courses/${courseId}/assignments`,
-      data: { ...newAssignment },
+      data: {
+        ...newAssignment,
+        dueDate: isoDue,
+      },
     })
     newAssignment.title = ''
     newAssignment.description = ''
@@ -165,14 +220,15 @@ async function addAssignment() {
 
 async function submitStudentAssignment(asgId: string) {
   try {
-    await apiRequest<Submission>({
+    const submitted = await apiRequest<Submission>({
       method: 'POST',
       url: `/lms/assignments/${asgId}/submit`,
       data: {
-        content: studentSubmission.content,
-        fileUrl: studentSubmission.fileUrl || undefined,
+        content: studentSubmission.content.trim() || undefined,
+        fileUrl: studentSubmission.fileUrl.trim() || undefined,
       },
     })
+    submittedMap.value = { ...submittedMap.value, [asgId]: submitted }
     studentSubmission.content = ''
     studentSubmission.fileUrl = ''
     toast.success('Jawaban tugas Anda berhasil dikumpulkan!')
@@ -301,8 +357,8 @@ onMounted(loadCourseData)
         >
           <div class="flex items-center justify-between">
             <span class="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-              <Video v-if="mat.contentType === 'VIDEO'" class="h-3.5 w-3.5 text-red-500" />
-              <FileText v-else-if="mat.contentType === 'PDF'" class="h-3.5 w-3.5 text-amber-600" />
+              <Video v-if="mat.contentType === 'VIDEO_URL' || mat.contentType === 'VIDEO'" class="h-3.5 w-3.5 text-red-500" />
+              <FileText v-else-if="mat.contentType === 'PDF_URL' || mat.contentType === 'PDF'" class="h-3.5 w-3.5 text-amber-600" />
               <LinkIcon v-else-if="mat.contentType === 'LINK'" class="h-3.5 w-3.5 text-sky-600" />
               <BookOpen v-else class="h-3.5 w-3.5 text-primary" />
               {{ mat.contentType }}
@@ -314,7 +370,7 @@ onMounted(loadCourseData)
             {{ mat.contentBody }}
           </p>
           <div
-            v-if="mat.contentType === 'VIDEO' && getYoutubeEmbedUrl(mat.fileUrl)"
+            v-if="(mat.contentType === 'VIDEO_URL' || mat.contentType === 'VIDEO') && getYoutubeEmbedUrl(mat.fileUrl)"
             class="aspect-video w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900"
           >
             <iframe
@@ -354,10 +410,10 @@ onMounted(loadCourseData)
           <div>
             <label class="block text-xs font-semibold text-slate-700 mb-1">Tipe Konten</label>
             <select v-model="newMaterial.contentType" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
-              <option value="TEXT">TEXT</option>
-              <option value="VIDEO">VIDEO</option>
-              <option value="PDF">PDF</option>
-              <option value="LINK">LINK</option>
+              <option value="TEXT">Teks / Ringkasan</option>
+              <option value="VIDEO_URL">Video (YouTube / URL)</option>
+              <option value="PDF_URL">Dokumen PDF (URL)</option>
+              <option value="LINK">Tautan Eksternal</option>
             </select>
           </div>
           <div>
@@ -407,7 +463,16 @@ onMounted(loadCourseData)
 
           <!-- Form Submit Siswa -->
           <div v-if="authStore.isStudent" class="pt-4 border-t border-slate-100 space-y-3">
-            <p class="text-xs font-bold text-slate-700">Kumpulkan Jawaban Anda</p>
+            <div
+              v-if="submittedMap[asg.id]"
+              class="rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-xs text-emerald-800 space-y-1"
+            >
+              <p class="font-bold">Tugas Terkumpul ({{ submittedMap[asg.id].status }})</p>
+              <p v-if="submittedMap[asg.id].content" class="text-emerald-700">{{ submittedMap[asg.id].content }}</p>
+            </div>
+            <p class="text-xs font-bold text-slate-700">
+              {{ submittedMap[asg.id] ? 'Perbarui Jawaban Anda' : 'Kumpulkan Jawaban Anda' }}
+            </p>
             <textarea
               v-model="studentSubmission.content"
               rows="3"
@@ -452,9 +517,23 @@ onMounted(loadCourseData)
             <label class="block text-xs font-semibold text-slate-700 mb-1">Instruksi</label>
             <textarea v-model="newAssignment.description" required rows="3" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
           </div>
+          <div class="grid grid-cols-2 gap-2.5">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Tipe Pengumpulan</label>
+              <select v-model="newAssignment.submissionType" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                <option value="TEXT">Jawaban Teks</option>
+                <option value="FILE">URL File</option>
+                <option value="LINK">Tautan Link</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Skor Maksimal</label>
+              <input v-model.number="newAssignment.maxScore" type="number" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+          </div>
           <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">Skor Maksimal</label>
-            <input v-model.number="newAssignment.maxScore" type="number" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Batas Pengumpulan</label>
+            <input v-model="newAssignment.dueDate" type="date" required class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
           </div>
           <button
             type="submit"

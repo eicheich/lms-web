@@ -10,10 +10,14 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import SkeletonCard from '@/components/common/SkeletonCard.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import type {
+  ChildrenAttendanceResponse,
   ClassStudentItem,
   ClassStudentsResponse,
+  Course,
+  GradeRecord,
   ReportCardRecord,
   SchoolClass,
+  StudentGradeItem,
   StudentGradeSummary,
 } from '@/types/api'
 
@@ -24,6 +28,7 @@ const toast = useToast()
 const classes = ref<SchoolClass[]>([])
 const selectedClassId = ref('')
 const classStudents = ref<ClassStudentItem[]>([])
+const coursesMap = ref<Record<string, Course>>({})
 
 const selectedStudentId = ref(
   authStore.isStudent ? authStore.user?.id || authStore.user?.userId || '' : '',
@@ -44,8 +49,54 @@ const finalizeForm = reactive({
   catatan: 'Aktif berpartisipasi dalam diskusi dan ujian CBT.',
 })
 
-async function loadClassesForPicker() {
+function computeLetterGrade(score: number): string {
+  if (score >= 90) return 'A'
+  if (score >= 85) return 'A-'
+  if (score >= 80) return 'B+'
+  if (score >= 75) return 'B'
+  if (score >= 70) return 'C+'
+  if (score >= 60) return 'C'
+  return 'D'
+}
+
+async function loadCoursesMap() {
+  if (Object.keys(coursesMap.value).length > 0) return
+  try {
+    const courses = await apiRequest<Course[]>({ method: 'GET', url: '/lms/courses' })
+    const map: Record<string, Course> = {}
+    courses.forEach((c) => {
+      map[c.id] = c
+    })
+    coursesMap.value = map
+  } catch {
+    // ignore if LMS module is locked or unavailable
+  }
+}
+
+async function loadStudentSources() {
   if (authStore.isStudent) return
+
+  if (authStore.isParent) {
+    try {
+      const res = await apiRequest<ChildrenAttendanceResponse>({
+        method: 'GET',
+        url: '/attendance/children',
+      })
+      classStudents.value = (res.children || []).map((c) => ({
+        studentId: c.studentId,
+        fullName: c.fullName || 'Anak',
+        email: c.email || '-',
+        enrolledAt: new Date().toISOString(),
+      }))
+      if (classStudents.value.length > 0 && !selectedStudentId.value) {
+        selectedStudentId.value = classStudents.value[0].studentId
+      }
+    } catch {
+      classStudents.value = []
+    }
+    return
+  }
+
   try {
     classes.value = await apiRequest<SchoolClass[]>({
       method: 'GET',
@@ -60,7 +111,7 @@ async function loadClassesForPicker() {
 }
 
 async function loadStudentsInClass(classId: string) {
-  if (!classId) return
+  if (!classId || authStore.isParent || authStore.isStudent) return
   try {
     const res = await apiRequest<ClassStudentsResponse>({
       method: 'GET',
@@ -79,6 +130,69 @@ watch(selectedClassId, (id) => {
   loadStudentsInClass(id)
 })
 
+function compileGradesFromArray(records: GradeRecord[]): StudentGradeSummary {
+  const matchedStudent = classStudents.value.find((s) => s.studentId === selectedStudentId.value)
+  const studentInfo = authStore.isStudent
+    ? {
+        id: selectedStudentId.value,
+        fullName: authStore.user?.fullName || 'Siswa',
+        email: authStore.user?.email || '-',
+        gradeLevel: 'Aktif',
+      }
+    : {
+        id: selectedStudentId.value,
+        fullName: matchedStudent?.fullName || `Siswa (${selectedStudentId.value.slice(0, 8)})`,
+        email: matchedStudent?.email || '-',
+        gradeLevel: classes.value.find((c) => c.id === selectedClassId.value)?.name || 'Aktif',
+      }
+
+  const byCourse: Record<string, { assignments: number[]; exams: number[] }> = {}
+  for (const r of records) {
+    if (!byCourse[r.courseId]) {
+      byCourse[r.courseId] = { assignments: [], exams: [] }
+    }
+    const pct = r.maxScore > 0 ? Math.round((r.score / r.maxScore) * 100) : r.score
+    if (r.componentType === 'EXAM') {
+      byCourse[r.courseId].exams.push(pct)
+    } else {
+      byCourse[r.courseId].assignments.push(pct)
+    }
+  }
+
+  const courseItems: StudentGradeItem[] = Object.entries(byCourse).map(([cid, data]) => {
+    const assignmentAvg =
+      data.assignments.length > 0
+        ? Math.round(data.assignments.reduce((a, b) => a + b, 0) / data.assignments.length)
+        : 0
+    const cbtAvg =
+      data.exams.length > 0
+        ? Math.round(data.exams.reduce((a, b) => a + b, 0) / data.exams.length)
+        : 0
+
+    let finalScore = 0
+    if (data.assignments.length > 0 && data.exams.length > 0) {
+      finalScore = Math.round((assignmentAvg + cbtAvg) / 2)
+    } else {
+      finalScore = data.exams.length > 0 ? cbtAvg : assignmentAvg
+    }
+
+    return {
+      courseId: cid,
+      courseName: coursesMap.value[cid]?.name || `Mata Pelajaran (${cid.slice(0, 8)})`,
+      assignmentAvg,
+      cbtAvg,
+      finalScore,
+      letterGrade: computeLetterGrade(finalScore),
+    }
+  })
+
+  return {
+    student: studentInfo,
+    courses: courseItems,
+    reportCard: gradeSummary.value?.reportCard ?? null,
+  }
+}
+
 async function loadGrades() {
   if (!selectedStudentId.value) {
     gradeSummary.value = null
@@ -87,10 +201,16 @@ async function loadGrades() {
   loading.value = true
   moduleLocked.value = false
   try {
-    gradeSummary.value = await apiRequest<StudentGradeSummary>({
+    await loadCoursesMap()
+    const raw = await apiRequest<StudentGradeSummary | GradeRecord[]>({
       method: 'GET',
       url: `/cbt/students/${selectedStudentId.value}/grades`,
     })
+    if (Array.isArray(raw)) {
+      gradeSummary.value = compileGradesFromArray(raw)
+    } else {
+      gradeSummary.value = raw
+    }
   } catch (err) {
     if (isModuleLockedError(err)) {
       moduleLocked.value = true
@@ -114,7 +234,7 @@ async function finalizeReportCard() {
   if (!selectedStudentId.value) return
   saving.value = true
   try {
-    await apiRequest<ReportCardRecord>({
+    const record = await apiRequest<ReportCardRecord>({
       method: 'POST',
       url: '/cbt/report-cards/finalize',
       data: {
@@ -131,6 +251,12 @@ async function finalizeReportCard() {
     showConfirmFinalize.value = false
     toast.success('Rapor akademik semester berhasil difinalisasi!')
     await loadGrades()
+    if (gradeSummary.value) {
+      gradeSummary.value = {
+        ...gradeSummary.value,
+        reportCard: record,
+      }
+    }
   } catch {
     toast.error('Gagal memfinalisasi rapor akademik')
   } finally {
@@ -143,7 +269,7 @@ function printReport() {
 }
 
 onMounted(async () => {
-  await loadClassesForPicker()
+  await loadStudentSources()
   if (selectedStudentId.value) {
     await loadGrades()
   }
@@ -165,7 +291,7 @@ onMounted(async () => {
       <div class="flex flex-wrap items-center gap-2.5">
         <template v-if="!authStore.isStudent">
           <select
-            v-if="classes.length > 0"
+            v-if="!authStore.isParent && classes.length > 0"
             v-model="selectedClassId"
             class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
           >
@@ -182,7 +308,7 @@ onMounted(async () => {
             </option>
           </select>
 
-          <div class="flex items-center gap-1.5">
+          <div v-if="!authStore.isParent" class="flex items-center gap-1.5">
             <input
               v-model="manualStudentId"
               type="text"
@@ -236,7 +362,14 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="overflow-x-auto">
+      <EmptyState
+        v-if="gradeSummary.courses.length === 0"
+        title="Belum Ada Nilai Tercatat"
+        description="Nilai tugas maupun ujian CBT siswa yang sudah dinilai akan muncul otomatis di sini."
+        :icon="Award"
+      />
+
+      <div v-else class="overflow-x-auto">
         <table class="w-full text-left text-sm">
           <thead>
             <tr class="border-b border-slate-200 text-xs font-bold uppercase text-slate-500">
@@ -273,10 +406,10 @@ onMounted(async () => {
             Rapor Resmi Difinalisasi • Semester {{ gradeSummary.reportCard.semester }} ({{ gradeSummary.reportCard.academicYear }})
           </span>
           <p class="text-sm font-semibold text-slate-900">
-            Sikap: {{ gradeSummary.reportCard.finalEvaluation.sikap }}
+            Sikap: {{ gradeSummary.reportCard.finalEvaluation?.sikap || '-' }}
           </p>
           <p class="text-xs text-slate-600">
-            Catatan Wali Kelas: "{{ gradeSummary.reportCard.finalEvaluation.catatan }}"
+            Catatan Wali Kelas: "{{ gradeSummary.reportCard.finalEvaluation?.catatan || '-' }}"
           </p>
         </div>
         <div class="text-left md:text-right shrink-0">

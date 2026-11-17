@@ -31,6 +31,8 @@ const answeredCount = computed(() => Object.keys(answers.value).length)
 const flaggedCount = computed(() => Object.values(flagged.value).filter(Boolean).length)
 const unansweredCount = computed(() => Math.max(0, questions.value.length - answeredCount.value))
 const isCriticalTime = computed(() => remainingSeconds.value <= 300)
+const computedResultScore = computed(() => result.value?.finalScore ?? result.value?.score ?? 0)
+const isPassedResult = computed(() => result.value?.passed ?? computedResultScore.value >= 75)
 
 const formattedTimer = computed(() => {
   const mins = Math.floor(remainingSeconds.value / 60)
@@ -157,7 +159,7 @@ async function submitExam() {
     <div
       :class="[
         'mx-auto flex h-16 w-16 items-center justify-center rounded-2xl',
-        result.passed ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600',
+        isPassedResult ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600',
       ]"
     >
       <CheckCircle2 class="h-8 w-8" />
@@ -168,9 +170,9 @@ async function submitExam() {
     </div>
     <div class="rounded-2xl bg-slate-50 border border-slate-200 p-6">
       <p class="text-xs font-bold uppercase tracking-wider text-slate-400">Nilai Akhir Anda</p>
-      <p class="text-5xl font-extrabold text-primary mt-1">{{ result.score }}</p>
-      <p class="text-xs font-semibold mt-2" :class="result.passed ? 'text-emerald-600' : 'text-amber-600'">
-        {{ result.passed ? 'LULUS (Memenuhi Passing Score)' : 'Perlu Remedial' }}
+      <p class="text-5xl font-extrabold text-primary mt-1">{{ computedResultScore }}</p>
+      <p class="text-xs font-semibold mt-2" :class="isPassedResult ? 'text-emerald-600' : 'text-amber-600'">
+        {{ isPassedResult ? 'LULUS (Memenuhi Passing Score)' : 'Perlu Remedial' }}
       </p>
     </div>
     <div class="flex justify-center gap-3">

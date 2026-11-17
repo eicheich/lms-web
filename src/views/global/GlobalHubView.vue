@@ -7,9 +7,11 @@ import {
   ExternalLink,
   Globe,
   MessageCircle,
+  Pencil,
   Plus,
   Search,
   Settings2,
+  Trash2,
   X,
 } from 'lucide-vue-next'
 import { apiRequest } from '@/services/api'
@@ -17,6 +19,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import EmptyState from '@/components/common/EmptyState.vue'
 import SkeletonCard from '@/components/common/SkeletonCard.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type {
   ConsultationRecord,
   ConsultationRegisterResponse,
@@ -42,7 +45,10 @@ const consultations = ref<ConsultationRecord[]>([])
 
 const submittingConsult = ref(false)
 const showCreateModal = ref<'program' | 'university' | 'scholarship' | null>(null)
+const editingId = ref<string | null>(null)
 const savingItem = ref(false)
+const deleteTarget = ref<{ type: 'program' | 'university' | 'scholarship'; id: string; title: string } | null>(null)
+const deletingItem = ref(false)
 
 const consultForm = reactive({
   name: authStore.user?.fullName || '',
@@ -170,16 +176,103 @@ async function submitConsultation() {
   }
 }
 
+function openCreateModal(type: 'program' | 'university' | 'scholarship') {
+  editingId.value = null
+  if (type === 'program') {
+    newProgram.title = ''
+    newProgram.slug = ''
+    newProgram.description = ''
+    newProgram.targetAudience = 'Siswa Kelas 10 - 12'
+    newProgram.quota = 30
+  } else if (type === 'university') {
+    newUniversity.name = ''
+    newUniversity.city = ''
+    newUniversity.qsRank = 50
+    newUniversity.website = ''
+    newUniversity.overview = ''
+  } else if (type === 'scholarship') {
+    newScholarship.name = ''
+    newScholarship.fundingType = 'FULL'
+    newScholarship.deadline = '2027-01-31'
+    newScholarship.description = ''
+    newScholarship.applicationUrl = ''
+  }
+  showCreateModal.value = type
+}
+
+function openEditProgram(prog: GlobalProgram) {
+  editingId.value = prog.id
+  newProgram.title = prog.title
+  newProgram.slug = prog.slug
+  newProgram.description = prog.description || prog.summary || ''
+  newProgram.targetAudience = prog.targetAudience || ''
+  newProgram.quota = prog.quota || 30
+  showCreateModal.value = 'program'
+}
+
+function openEditUniversity(uni: GlobalUniversity) {
+  editingId.value = uni.id
+  newUniversity.name = uni.name
+  newUniversity.city = uni.city || ''
+  newUniversity.countryId =
+    uni.countryId || (typeof uni.country === 'object' && uni.country ? uni.country.id : countries.value[0]?.id || '')
+  newUniversity.qsRank = uni.qsRank || uni.qsRanking || 50
+  newUniversity.website = uni.website || uni.websiteUrl || ''
+  newUniversity.overview = uni.overview || ''
+  showCreateModal.value = 'university'
+}
+
+function openEditScholarship(sch: GlobalScholarship) {
+  editingId.value = sch.id
+  newScholarship.name = sch.name || sch.title || ''
+  newScholarship.countryId =
+    typeof sch.country === 'object' && sch.country ? sch.country.id : countries.value[0]?.id || ''
+  newScholarship.fundingType =
+    (sch.fundingType || sch.coverage)?.toUpperCase() === 'PARTIAL' ? 'PARTIAL' : 'FULL'
+  newScholarship.deadline = sch.deadline ? sch.deadline.slice(0, 10) : '2027-01-31'
+  newScholarship.description = sch.description || sch.eligibility || ''
+  newScholarship.applicationUrl = sch.applicationUrl || sch.applyUrl || ''
+  showCreateModal.value = 'scholarship'
+}
+
+async function confirmDeleteItem() {
+  if (!deleteTarget.value) return
+  deletingItem.value = true
+  try {
+    const endpointMap = {
+      program: `/global/programs/${deleteTarget.value.id}`,
+      university: `/global/universities/${deleteTarget.value.id}`,
+      scholarship: `/global/scholarships/${deleteTarget.value.id}`,
+    }
+    await apiRequest({
+      method: 'DELETE',
+      url: endpointMap[deleteTarget.value.type],
+    })
+    toast.success(`${deleteTarget.value.title} berhasil dihapus!`)
+    deleteTarget.value = null
+    await fetchCatalog()
+  } catch (err) {
+    toast.error(
+      'Gagal menghapus item',
+      (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Pastikan endpoint DELETE tersedia di backend.',
+    )
+  } finally {
+    deletingItem.value = false
+  }
+}
+
 async function createGlobalItem() {
   savingItem.value = true
+  const isEdit = Boolean(editingId.value)
   try {
     if (showCreateModal.value === 'program') {
       const slug =
         newProgram.slug.trim() ||
         newProgram.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
       await apiRequest({
-        method: 'POST',
-        url: '/global/programs',
+        method: isEdit ? 'PUT' : 'POST',
+        url: isEdit ? `/global/programs/${editingId.value}` : '/global/programs',
         data: {
           title: newProgram.title,
           slug,
@@ -188,14 +281,11 @@ async function createGlobalItem() {
           quota: Number(newProgram.quota),
         },
       })
-      toast.success('Program baru berhasil ditambahkan!')
-      newProgram.title = ''
-      newProgram.slug = ''
-      newProgram.description = ''
+      toast.success(isEdit ? 'Program berhasil diperbarui!' : 'Program baru berhasil ditambahkan!')
     } else if (showCreateModal.value === 'university') {
       await apiRequest({
-        method: 'POST',
-        url: '/global/universities',
+        method: isEdit ? 'PUT' : 'POST',
+        url: isEdit ? `/global/universities/${editingId.value}` : '/global/universities',
         data: {
           name: newUniversity.name,
           city: newUniversity.city,
@@ -205,13 +295,11 @@ async function createGlobalItem() {
           overview: newUniversity.overview || undefined,
         },
       })
-      toast.success('Universitas mitra berhasil ditambahkan!')
-      newUniversity.name = ''
-      newUniversity.city = ''
+      toast.success(isEdit ? 'Data universitas berhasil diperbarui!' : 'Universitas mitra berhasil ditambahkan!')
     } else if (showCreateModal.value === 'scholarship') {
       await apiRequest({
-        method: 'POST',
-        url: '/global/scholarships',
+        method: isEdit ? 'PUT' : 'POST',
+        url: isEdit ? `/global/scholarships/${editingId.value}` : '/global/scholarships',
         data: {
           name: newScholarship.name,
           countryId: newScholarship.countryId || undefined,
@@ -221,11 +309,10 @@ async function createGlobalItem() {
           applicationUrl: newScholarship.applicationUrl || undefined,
         },
       })
-      toast.success('Informasi beasiswa berhasil ditambahkan!')
-      newScholarship.name = ''
-      newScholarship.description = ''
+      toast.success(isEdit ? 'Beasiswa berhasil diperbarui!' : 'Informasi beasiswa berhasil ditambahkan!')
     }
     showCreateModal.value = null
+    editingId.value = null
     await fetchCatalog()
   } catch (err) {
     toast.error(
@@ -284,7 +371,7 @@ onMounted(async () => {
             <button
               v-if="activeTab === 'programs'"
               type="button"
-              @click="showCreateModal = 'program'"
+              @click="openCreateModal('program')"
               class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90"
             >
               <Plus class="h-4 w-4" />
@@ -293,7 +380,7 @@ onMounted(async () => {
             <button
               v-else-if="activeTab === 'universities'"
               type="button"
-              @click="showCreateModal = 'university'"
+              @click="openCreateModal('university')"
               class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90"
             >
               <Plus class="h-4 w-4" />
@@ -302,7 +389,7 @@ onMounted(async () => {
             <button
               v-else-if="activeTab === 'scholarships'"
               type="button"
-              @click="showCreateModal = 'scholarship'"
+              @click="openCreateModal('scholarship')"
               class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90"
             >
               <Plus class="h-4 w-4" />
@@ -372,26 +459,50 @@ onMounted(async () => {
           :icon="Compass"
         />
         <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <router-link
+          <div
             v-for="prog in programs"
             :key="prog.id"
-            :to="`/global/programs/${prog.id}`"
-            class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm hover:border-primary/50 transition space-y-3 block"
+            class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm hover:border-primary/50 transition flex flex-col justify-between gap-3"
           >
-            <div class="flex items-center justify-between">
-              <span class="rounded-full bg-primary-50 px-3 py-1 text-xs font-bold text-primary">
-                {{ prog.category || prog.targetAudience || 'Program Global' }}
-              </span>
-              <span class="text-xs text-slate-500">
-                {{ prog.quota ? `Kuota ${prog.quota} Siswa` : prog.duration || '' }}
-              </span>
+            <div class="space-y-3">
+              <div class="flex items-center justify-between gap-2">
+                <span class="rounded-full bg-primary-50 px-3 py-1 text-xs font-bold text-primary">
+                  {{ prog.category || prog.targetAudience || 'Program Global' }}
+                </span>
+                <span class="text-xs text-slate-500">
+                  {{ prog.quota ? `Kuota ${prog.quota} Siswa` : prog.duration || '' }}
+                </span>
+              </div>
+              <h3 class="text-lg font-bold text-slate-900">{{ prog.title }}</h3>
+              <p class="text-sm text-slate-600 line-clamp-2">{{ prog.description || prog.summary }}</p>
             </div>
-            <h3 class="text-lg font-bold text-slate-900">{{ prog.title }}</h3>
-            <p class="text-sm text-slate-600 line-clamp-2">{{ prog.description || prog.summary }}</p>
-            <p class="text-xs font-semibold text-primary pt-2">
-              Lihat Detail Program →
-            </p>
-          </router-link>
+            <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+              <router-link
+                :to="`/global/programs/${prog.id}`"
+                class="text-xs font-semibold text-primary hover:underline"
+              >
+                Lihat Detail Program →
+              </router-link>
+              <div v-if="authStore.canManageGlobalHub" class="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  @click="openEditProgram(prog)"
+                  class="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-primary"
+                  title="Edit Program"
+                >
+                  <Pencil class="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  @click="deleteTarget = { type: 'program', id: prog.id, title: prog.title }"
+                  class="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-red-50 hover:text-red-600"
+                  title="Hapus Program"
+                >
+                  <Trash2 class="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -428,16 +539,37 @@ onMounted(async () => {
                 {{ uni.overview }}
               </p>
             </div>
-            <a
-              v-if="uni.website || uni.websiteUrl"
-              :href="(uni.website || uni.websiteUrl)!"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline pt-2"
-            >
-              Kunjungi Website Resmi
-              <ExternalLink class="h-3.5 w-3.5" />
-            </a>
+            <div class="pt-2 flex items-center justify-between gap-2">
+              <a
+                v-if="uni.website || uni.websiteUrl"
+                :href="(uni.website || uni.websiteUrl)!"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
+              >
+                Kunjungi Website Resmi
+                <ExternalLink class="h-3.5 w-3.5" />
+              </a>
+              <span v-else />
+              <div v-if="authStore.canManageGlobalHub" class="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  @click="openEditUniversity(uni)"
+                  class="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-primary"
+                  title="Edit Universitas"
+                >
+                  <Pencil class="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  @click="deleteTarget = { type: 'university', id: uni.id, title: uni.name }"
+                  class="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-red-50 hover:text-red-600"
+                  title="Hapus Universitas"
+                >
+                  <Trash2 class="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -453,28 +585,48 @@ onMounted(async () => {
           <div
             v-for="sch in scholarships"
             :key="sch.id"
-            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-2"
+            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col justify-between gap-3"
           >
-            <div class="flex items-center justify-between">
-              <span
-                :class="[
-                  'rounded-full px-2.5 py-0.5 text-xs font-bold',
-                  (sch.fundingType || sch.coverage)?.toUpperCase() === 'FULL'
-                    ? 'bg-emerald-50 text-emerald-700'
-                    : 'bg-sky-50 text-sky-700',
-                ]"
-              >
-                {{ (sch.fundingType || sch.coverage)?.toUpperCase() === 'FULL' ? 'Beasiswa Penuh' : 'Beasiswa Parsial' }}
-              </span>
-              <span v-if="sch.deadline" class="text-xs text-slate-400">
-                Batas: {{ new Date(sch.deadline).toLocaleDateString('id-ID') }}
-              </span>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <span
+                  :class="[
+                    'rounded-full px-2.5 py-0.5 text-xs font-bold',
+                    (sch.fundingType || sch.coverage)?.toUpperCase() === 'FULL'
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'bg-sky-50 text-sky-700',
+                  ]"
+                >
+                  {{ (sch.fundingType || sch.coverage)?.toUpperCase() === 'FULL' ? 'Beasiswa Penuh' : 'Beasiswa Parsial' }}
+                </span>
+                <span v-if="sch.deadline" class="text-xs text-slate-400">
+                  Batas: {{ new Date(sch.deadline).toLocaleDateString('id-ID') }}
+                </span>
+              </div>
+              <h3 class="text-base font-bold text-slate-900">{{ sch.name || sch.title }}</h3>
+              <p class="text-xs font-semibold text-primary">
+                {{ getCountryName(sch.country) }}
+              </p>
+              <p class="text-xs text-slate-600 leading-relaxed">{{ sch.description || sch.eligibility }}</p>
             </div>
-            <h3 class="text-base font-bold text-slate-900">{{ sch.name || sch.title }}</h3>
-            <p class="text-xs font-semibold text-primary">
-              {{ getCountryName(sch.country) }}
-            </p>
-            <p class="text-xs text-slate-600 leading-relaxed">{{ sch.description || sch.eligibility }}</p>
+            <div v-if="authStore.canManageGlobalHub" class="pt-2 border-t border-slate-100 flex justify-end gap-1.5">
+              <button
+                type="button"
+                @click="openEditScholarship(sch)"
+                class="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-primary"
+                title="Edit Beasiswa"
+              >
+                <Pencil class="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                @click="deleteTarget = { type: 'scholarship', id: sch.id, title: sch.name || sch.title || 'Beasiswa' }"
+                class="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-red-50 hover:text-red-600"
+                title="Hapus Beasiswa"
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -669,11 +821,17 @@ onMounted(async () => {
         <div class="flex items-center justify-between">
           <h3 class="text-base font-bold text-slate-900">
             {{
-              showCreateModal === 'program'
-                ? 'Tambah Program Global / Sekolah'
-                : showCreateModal === 'university'
-                  ? 'Tambah Universitas Mitra'
-                  : 'Tambah Informasi Beasiswa'
+              editingId
+                ? showCreateModal === 'program'
+                  ? 'Edit Program'
+                  : showCreateModal === 'university'
+                    ? 'Edit Universitas Mitra'
+                    : 'Edit Informasi Beasiswa'
+                : showCreateModal === 'program'
+                  ? 'Tambah Program Global / Sekolah'
+                  : showCreateModal === 'university'
+                    ? 'Tambah Universitas Mitra'
+                    : 'Tambah Informasi Beasiswa'
             }}
           </h3>
           <button @click="showCreateModal = null" class="text-slate-400 hover:text-slate-600">
@@ -773,5 +931,16 @@ onMounted(async () => {
         </form>
       </div>
     </div>
+
+    <ConfirmDialog
+      :open="Boolean(deleteTarget)"
+      :title="`Hapus ${deleteTarget?.title || 'Item'}?`"
+      description="Item yang dihapus atau diarsipkan tidak akan tampil lagi di katalog siswa."
+      confirm-text="Ya, Hapus"
+      variant="danger"
+      :loading="deletingItem"
+      @cancel="deleteTarget = null"
+      @confirm="confirmDeleteItem"
+    />
   </div>
 </template>
