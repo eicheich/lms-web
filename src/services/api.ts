@@ -99,17 +99,24 @@ apiClient.interceptors.response.use(
   async (error: AxiosError) => {
     const originalRequest = error.config as RetryableRequestConfig | undefined
 
-    // 1. Handle 403 Forbidden (Feature Flag / Module Inactive) without logging out
+    // 1. Handle 403 Forbidden (only treat as ModuleLocked when backend throws ModuleInactiveException)
     if (error.response?.status === 403) {
-      const url = originalRequest?.url || ''
-      const lockedModule: ModuleKey = url.includes('/cbt') ? 'CBT_GRADING' : 'LMS'
-      const wrapped = new Error(
-        (error.response.data as { message?: string })?.message ||
-          `Modul ${lockedModule} belum diaktifkan untuk sekolah ini.`,
-      ) as ModuleLockedError
-      wrapped.isModuleLocked = true
-      wrapped.lockedModule = lockedModule
-      return Promise.reject(wrapped)
+      const serverMsg = (error.response.data as { message?: string })?.message || ''
+      const isModuleInactive =
+        serverMsg.toLowerCase().includes('not active') ||
+        serverMsg.toLowerCase().includes('subscribed for this tenant')
+
+      if (isModuleInactive) {
+        const url = originalRequest?.url || ''
+        const lockedModule: ModuleKey = url.includes('/cbt') ? 'CBT_GRADING' : 'LMS'
+        const wrapped = new Error(
+          serverMsg || `Modul ${lockedModule} belum diaktifkan untuk sekolah ini.`,
+        ) as ModuleLockedError
+        wrapped.isModuleLocked = true
+        wrapped.lockedModule = lockedModule
+        return Promise.reject(wrapped)
+      }
+      return Promise.reject(error)
     }
 
     // 2. Handle 401 Unauthorized via Mutex Queue Refresh Token Rotation
