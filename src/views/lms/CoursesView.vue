@@ -21,6 +21,7 @@ const form = reactive({
   subject: 'Matematika',
   gradeLevel: 'Kelas 12',
   academicYear: '2026/2027',
+  teacherId: '',
 })
 
 async function fetchCourses() {
@@ -44,11 +45,19 @@ async function createCourse() {
     await apiRequest<Course>({
       method: 'POST',
       url: '/lms/courses',
-      data: { ...form },
+      data: {
+        name: form.name,
+        code: form.code,
+        subject: form.subject,
+        gradeLevel: form.gradeLevel,
+        academicYear: form.academicYear,
+        teacherId: form.teacherId.trim() || undefined,
+      },
     })
     showCreateModal.value = false
     form.name = ''
     form.code = ''
+    form.teacherId = ''
     await fetchCourses()
   } finally {
     creating.value = false
@@ -190,6 +199,15 @@ onMounted(() => {
                 class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
               />
             </div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">ID Guru Pengampu (Opsional)</label>
+            <input
+              v-model="form.teacherId"
+              type="text"
+              placeholder="Masukkan ID Guru pengampu"
+              class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono"
+            />
           </div>
 
           <div class="pt-2 flex justify-end gap-2">

@@ -47,9 +47,7 @@ const loading = ref(true)
 const saving = ref(false)
 const feedbackMsg = ref('')
 
-const canRecordAttendance = ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER'].includes(
-  authStore.role || '',
-)
+const canRecordAttendance = authStore.isTeacher
 const isStaff = ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER', 'COUNSELOR'].includes(
   authStore.role || '',
 )
@@ -275,9 +273,15 @@ onMounted(() => {
               <h3 class="text-base font-bold text-slate-900">
                 Lembar Absensi {{ classSheet?.class?.name }} ({{ selectedDate }})
               </h3>
+              <span
+                v-if="!canRecordAttendance"
+                class="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600"
+              >
+                Mode Monitoring
+              </span>
             </div>
             <p v-if="classSheet?.students.length" class="text-xs text-slate-500 mt-1">
-              Rekap Draft:
+              {{ canRecordAttendance ? 'Rekap Draft:' : 'Rekap Kehadiran:' }}
               <span class="font-semibold text-emerald-600">{{ draftSummary.PRESENT }} Hadir</span> •
               <span class="font-semibold text-amber-600">{{ draftSummary.LATE }} Terlambat</span> •
               <span class="font-semibold text-sky-600">{{ draftSummary.SICK + draftSummary.PERMIT }} Sakit/Izin</span> •

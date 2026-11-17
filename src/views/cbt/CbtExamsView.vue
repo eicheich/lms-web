@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ClipboardCheck, Clock, Play, Plus, Shuffle, X } from 'lucide-vue-next'
+import { ClipboardCheck, Clock, Eye, Play, Plus, Shuffle, X } from 'lucide-vue-next'
 import { apiRequest, isModuleLockedError } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import LockedModuleBanner from '@/components/common/LockedModuleBanner.vue'
@@ -13,6 +13,8 @@ const banks = ref<QuestionBank[]>([])
 const availableQuestions = ref<Question[]>([])
 const moduleLocked = ref(false)
 const showCreateModal = ref(false)
+const previewExam = ref<CbtExam | null>(null)
+const loadingPreview = ref(false)
 
 const form = reactive({
   title: '',
@@ -26,7 +28,7 @@ async function loadExams() {
   moduleLocked.value = false
   try {
     exams.value = await apiRequest<CbtExam[]>({ method: 'GET', url: '/cbt/exams' })
-    if (authStore.isTeacherOrAdmin) {
+    if (authStore.isTeacher) {
       banks.value = await apiRequest<QuestionBank[]>({ method: 'GET', url: '/cbt/question-banks' })
       if (banks.value.length > 0) {
         availableQuestions.value = await apiRequest<Question[]>({
@@ -40,6 +42,19 @@ async function loadExams() {
     if (isModuleLockedError(err)) {
       moduleLocked.value = true
     }
+  }
+}
+
+async function openPreviewModal(examId: string) {
+  loadingPreview.value = true
+  try {
+    const res = await apiRequest<CbtExam | { exam: CbtExam; questions?: Question[] }>({
+      method: 'GET',
+      url: `/cbt/exams/${examId}`,
+    })
+    previewExam.value = 'exam' in res ? { ...res.exam, questions: res.questions || [] } : res
+  } finally {
+    loadingPreview.value = false
   }
 }
 
@@ -81,7 +96,7 @@ onMounted(() => {
         </p>
       </div>
       <button
-        v-if="authStore.isTeacherOrAdmin"
+        v-if="authStore.isTeacher"
         type="button"
         @click="showCreateModal = true"
         class="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90"
@@ -120,15 +135,26 @@ onMounted(() => {
 
         <div class="pt-4 border-t border-slate-100 flex items-center justify-between">
           <span class="text-xs text-slate-400">
-            {{ exam.questionIds?.length ?? 4 }} Butir Soal
+            {{ exam.questionIds?.length ?? 0 }} Butir Soal
           </span>
           <router-link
+            v-if="authStore.isStudent"
             :to="`/cbt/exams/${exam.id}/run`"
             class="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90 transition"
           >
             <Play class="h-3.5 w-3.5" />
-            {{ authStore.isStudent ? 'Mulai Ujian Sekarang' : 'Pratinjau Sesi Ujian' }}
+            Mulai Kerjakan Ujian
           </router-link>
+          <button
+            v-else
+            type="button"
+            :disabled="loadingPreview"
+            @click="openPreviewModal(exam.id)"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            <Eye class="h-3.5 w-3.5 text-primary" />
+            Lihat Detail & Soal Ujian
+          </button>
         </div>
       </div>
     </div>
@@ -187,6 +213,51 @@ onMounted(() => {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Modal Preview Detail & Soal Ujian (Monitoring Admin / Guru) -->
+    <div
+      v-if="previewExam"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+    >
+      <div class="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div>
+            <h3 class="text-base font-bold text-slate-900">{{ previewExam.title }}</h3>
+            <p class="text-xs text-slate-500">
+              Durasi {{ previewExam.durationMinutes }} Menit • Passing Score {{ previewExam.passingScore }}
+            </p>
+          </div>
+          <button @click="previewExam = null" class="text-slate-400 hover:text-slate-600">
+            <X class="h-5 w-5" />
+          </button>
+        </div>
+
+        <div v-if="!previewExam.questions?.length" class="py-8 text-center text-sm text-slate-500">
+          Belum ada butir soal yang terhubung ke ujian ini.
+        </div>
+
+        <div v-else class="space-y-3">
+          <div
+            v-for="(q, idx) in previewExam.questions"
+            :key="q.id"
+            class="rounded-xl border border-slate-200 p-4 space-y-2"
+          >
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-bold text-primary">Soal #{{ idx + 1 }} • Bobot {{ q.scoreWeight }}</span>
+              <span v-if="q.answerKey" class="rounded bg-emerald-50 px-2 py-0.5 font-bold text-emerald-700">
+                Kunci: {{ q.answerKey }}
+              </span>
+            </div>
+            <p class="text-sm font-semibold text-slate-900">{{ q.prompt }}</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs text-slate-600">
+              <div v-for="opt in q.options" :key="opt.key" class="rounded-lg bg-slate-50 px-2.5 py-1.5">
+                <span class="font-bold mr-1">{{ opt.key }}.</span>{{ opt.text }}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>

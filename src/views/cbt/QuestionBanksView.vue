@@ -2,8 +2,11 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { CheckCircle2, FileQuestion, Plus } from 'lucide-vue-next'
 import { apiRequest, isModuleLockedError } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 import LockedModuleBanner from '@/components/common/LockedModuleBanner.vue'
 import type { Question, QuestionBank } from '@/types/api'
+
+const authStore = useAuthStore()
 
 const banks = ref<QuestionBank[]>([])
 const selectedBankId = ref('')
@@ -143,7 +146,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
+        <div v-if="authStore.isTeacher" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
           <h3 class="text-sm font-bold text-slate-900">Buat Bank Soal Baru</h3>
           <form @submit.prevent="createBank" class="space-y-2.5">
             <input
@@ -170,7 +173,7 @@ onMounted(() => {
 
       <!-- Right: Questions & Add Question Form -->
       <div class="lg:col-span-8 space-y-6">
-        <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+        <div v-if="authStore.isTeacher" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
           <h3 class="text-sm font-bold text-slate-900">Tambah Butir Soal Pilihan Ganda</h3>
           <form @submit.prevent="createQuestion" class="space-y-3">
             <textarea

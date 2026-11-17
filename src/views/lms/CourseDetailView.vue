@@ -75,12 +75,12 @@ async function loadCourseData() {
   loading.value = true
   moduleLocked.value = false
   try {
-    const [crs, mats, asgs] = await Promise.all([
-      apiRequest<Course>({ method: 'GET', url: `/lms/courses/${courseId}` }),
+    const [crsRes, mats, asgs] = await Promise.all([
+      apiRequest<Course | { course: Course }>({ method: 'GET', url: `/lms/courses/${courseId}` }),
       apiRequest<Material[]>({ method: 'GET', url: `/lms/courses/${courseId}/materials` }),
       apiRequest<Assignment[]>({ method: 'GET', url: `/lms/courses/${courseId}/assignments` }),
     ])
-    course.value = crs
+    course.value = 'course' in crsRes ? crsRes.course : crsRes
     materials.value = mats
     assignments.value = asgs
     if (asgs.length > 0 && !selectedAssignmentId.value) {
@@ -97,7 +97,7 @@ async function loadCourseData() {
 }
 
 async function loadSubmissions(assignmentId: string) {
-  if (!assignmentId || !authStore.isTeacherOrAdmin) return
+  if (!assignmentId || !authStore.isTeacher) return
   submissions.value = await apiRequest<Submission[]>({
     method: 'GET',
     url: `/lms/assignments/${assignmentId}/submissions`,
@@ -256,7 +256,7 @@ onMounted(loadCourseData)
             Tugas ({{ assignments.length }})
           </button>
           <button
-            v-if="authStore.isTeacherOrAdmin"
+            v-if="authStore.isTeacher"
             type="button"
             @click="activeTab = 'grading'"
             :class="[
@@ -287,7 +287,7 @@ onMounted(loadCourseData)
     <!-- TAB 1: MATERIALS -->
     <SkeletonCard v-if="loading" :count="2" />
     <div v-else-if="activeTab === 'materials'" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      <div :class="authStore.isTeacherOrAdmin ? 'lg:col-span-8 space-y-4' : 'lg:col-span-12 space-y-4'">
+      <div :class="authStore.isTeacher ? 'lg:col-span-8 space-y-4' : 'lg:col-span-12 space-y-4'">
         <EmptyState
           v-if="materials.length === 0"
           title="Belum Ada Materi Pembelajaran"
@@ -337,9 +337,9 @@ onMounted(loadCourseData)
         </div>
       </div>
 
-      <!-- Form Tambah Materi (Guru / Admin) -->
+      <!-- Form Tambah Materi (Khusus Guru) -->
       <div
-        v-if="authStore.isTeacherOrAdmin"
+        v-if="authStore.isTeacher"
         class="lg:col-span-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm h-fit space-y-4"
       >
         <h3 class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
@@ -380,7 +380,7 @@ onMounted(loadCourseData)
 
     <!-- TAB 2: ASSIGNMENTS -->
     <div v-else-if="activeTab === 'assignments'" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      <div :class="authStore.isTeacherOrAdmin ? 'lg:col-span-8 space-y-4' : 'lg:col-span-12 space-y-4'">
+      <div :class="authStore.isTeacher ? 'lg:col-span-8 space-y-4' : 'lg:col-span-12 space-y-4'">
         <EmptyState
           v-if="assignments.length === 0"
           title="Belum Ada Tugas"
@@ -434,9 +434,9 @@ onMounted(loadCourseData)
         </div>
       </div>
 
-      <!-- Form Buat Tugas (Guru / Admin) -->
+      <!-- Form Buat Tugas (Khusus Guru) -->
       <div
-        v-if="authStore.isTeacherOrAdmin"
+        v-if="authStore.isTeacher"
         class="lg:col-span-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm h-fit space-y-4"
       >
         <h3 class="text-sm font-bold text-slate-900 flex items-center gap-1.5">

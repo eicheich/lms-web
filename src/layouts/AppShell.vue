@@ -63,89 +63,107 @@ interface NavGroup {
   items: NavItem[]
 }
 
-const navGroups = computed<NavGroup[]>(() => [
-  {
-    group: 'Utama',
-    items: [
-      {
-        label: 'Beranda Portal',
-        to: '/',
-        icon: LayoutDashboard,
-      },
-      {
-        label: 'Global & Career Hub',
-        to: '/global',
-        icon: Globe,
-      },
-    ],
-  },
-  {
-    group: 'Akademik & Kelas',
-    items: [
-      {
-        label: 'Manajemen Kelas',
-        to: '/academic/classes',
-        icon: School,
-        roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER', 'COUNSELOR'],
-      },
-      {
-        label: 'Absensi Siswa',
-        to: '/attendance',
-        icon: CalendarCheck,
-      },
-    ],
-  },
-  {
-    group: 'Pembelajaran & Ujian',
-    items: [
-      {
-        label: 'Kursus & Materi (LMS)',
-        to: '/lms/courses',
-        icon: BookOpen,
-      },
-      {
-        label: 'Bank Soal CBT',
-        to: '/cbt/question-banks',
-        icon: FileQuestion,
-        roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER'],
-      },
-      {
-        label: 'Ujian CBT',
-        to: '/cbt/exams',
-        icon: ClipboardCheck,
-        roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER', 'STUDENT'],
-      },
-      {
-        label: 'Nilai & Rapor',
-        to: '/cbt/grades',
-        icon: Award,
-      },
-    ],
-  },
-  {
-    group: 'Administrasi Sekolah',
-    items: [
-      {
-        label: 'Branding White-Label',
-        to: '/admin/branding',
-        icon: Palette,
-        roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL'],
-      },
-      {
-        label: 'Home Layout Editor',
-        to: '/admin/home-layout',
-        icon: LayoutGrid,
-        roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL'],
-      },
-      {
-        label: 'Desainer Halaman Program',
-        to: '/admin/sdui-builder',
-        icon: Blocks,
-        roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL'],
-      },
-    ],
-  },
-])
+const navGroups = computed<NavGroup[]>(() => {
+  const isExecOrCounselor = ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'COUNSELOR'].includes(
+    authStore.role || '',
+  )
+  const isExec = ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL'].includes(authStore.role || '')
+
+  return [
+    {
+      group: 'Utama',
+      items: [
+        {
+          label: 'Beranda Portal',
+          to: '/',
+          icon: LayoutDashboard,
+        },
+        {
+          label: 'Global & Career Hub',
+          to: '/global',
+          icon: Globe,
+        },
+      ],
+    },
+    {
+      group: 'Akademik & Kelas',
+      items: [
+        {
+          label: 'Manajemen Kelas',
+          to: '/academic/classes',
+          icon: School,
+          roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER', 'COUNSELOR'],
+        },
+        {
+          label: isExecOrCounselor
+            ? 'Rekap Absensi'
+            : authStore.isStudent
+              ? 'Kehadiran Saya'
+              : authStore.isParent
+                ? 'Kehadiran Anak'
+                : 'Absensi Siswa',
+          to: '/attendance',
+          icon: CalendarCheck,
+        },
+      ],
+    },
+    {
+      group: 'Pembelajaran & Ujian',
+      items: [
+        {
+          label: isExec ? 'Monitoring Mata Pelajaran' : 'Kursus & Materi (LMS)',
+          to: '/lms/courses',
+          icon: BookOpen,
+          roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER', 'STUDENT'],
+        },
+        {
+          label: isExec ? 'Monitoring Bank Soal' : 'Bank Soal CBT',
+          to: '/cbt/question-banks',
+          icon: FileQuestion,
+          roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER'],
+        },
+        {
+          label: isExec ? 'Monitoring Ujian CBT' : 'Ujian CBT',
+          to: '/cbt/exams',
+          icon: ClipboardCheck,
+          roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER', 'STUDENT'],
+        },
+        {
+          label: authStore.isParent
+            ? 'Rapor Anak'
+            : authStore.isStudent
+              ? 'Nilai & Rapor Saya'
+              : 'Nilai & Rapor',
+          to: '/cbt/grades',
+          icon: Award,
+        },
+      ],
+    },
+    {
+      group: 'Administrasi Sekolah',
+      items: [
+        {
+          label: 'Branding White-Label',
+          to: '/admin/branding',
+          icon: Palette,
+          roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL'],
+        },
+        {
+          label: 'Home Layout Editor',
+          to: '/admin/home-layout',
+          icon: LayoutGrid,
+          roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL'],
+        },
+        {
+          label: 'Desainer Halaman Program',
+          to: '/admin/sdui-builder',
+          icon: Blocks,
+          roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'COUNSELOR'],
+        },
+      ],
+    },
+  ]
+})
 
 const visibleNavGroups = computed(() => {
   const userRole = authStore.role

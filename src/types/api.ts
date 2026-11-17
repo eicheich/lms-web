@@ -150,61 +150,83 @@ export interface GlobalCountry {
   id: string
   name: string
   code: string
-  region: string
-  flagEmoji?: string
-  description: string
-  universityCount: number
-  scholarshipCount: number
+  region?: string
+  flagEmoji?: string | null
+  description?: string | null
+  universityCount?: number
+  scholarshipCount?: number
 }
 
 export interface GlobalUniversity {
   id: string
   name: string
-  country: string
-  qsRanking: number
-  city: string
-  websiteUrl: string
-  popularMajors: string[]
-  isPartner: boolean
+  country?: string | { id: string; name: string; code: string }
+  countryId?: string
+  qsRanking?: number | null
+  qsRank?: number | null
+  city?: string | null
+  websiteUrl?: string | null
+  website?: string | null
+  overview?: string | null
+  popularMajors?: string[]
+  isPartner?: boolean
 }
 
 export interface GlobalScholarship {
   id: string
-  title: string
-  provider: string
-  country: string
-  coverage: 'Full' | 'Partial'
-  deadline: string
-  description: string
-  applyUrl?: string
+  title?: string
+  name?: string
+  provider?: string
+  country?: string | { id: string; name: string; code: string } | null
+  coverage?: 'Full' | 'Partial'
+  fundingType?: 'FULL' | 'PARTIAL'
+  deadline?: string | null
+  eligibility?: string | null
+  description?: string | null
+  applyUrl?: string | null
+  applicationUrl?: string | null
 }
 
 export interface GlobalProgram {
   id: string
   title: string
   slug: string
-  category: string
-  destination: string
-  duration: string
-  batch: string
-  summary: string
-  coverImageUrl?: string
+  category?: string
+  destination?: string
+  duration?: string
+  batch?: string
+  summary?: string
+  description?: string
+  targetAudience?: string | null
+  quota?: number
+  startDate?: string | null
+  endDate?: string | null
+  bannerUrl?: string | null
+  coverImageUrl?: string | null
+  isGlobal?: boolean
   isTenantSpecific?: boolean
+  status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
 }
 
 export interface ConsultationDto {
   name: string
   phone: string
-  email: string
-  destinationCountry: string
-  intendedMajor: string
+  email?: string
+  destinationCountry?: string
+  intendedMajor?: string
   notes?: string
 }
 
 export interface ConsultationRecord extends ConsultationDto {
   id: string
-  status: 'PENDING' | 'CONTACTED' | 'SCHEDULED'
+  status: 'PENDING' | 'CONTACTED' | 'SCHEDULED' | 'COMPLETED'
   createdAt: string
+  whatsappUrl?: string
+  redirectUrl?: string
+}
+
+export interface ConsultationRegisterResponse {
+  consultation?: ConsultationRecord
   whatsappUrl?: string
   redirectUrl?: string
 }

@@ -20,8 +20,14 @@ export const useAuthStore = defineStore('auth', () => {
   const isAdmin = computed(() =>
     ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL'].includes(user.value?.role ?? ''),
   )
+  const isSchoolExecutive = isAdmin
+  const isTeacher = computed(() => user.value?.role === 'TEACHER')
+  const isCounselor = computed(() => user.value?.role === 'COUNSELOR')
   const isTeacherOrAdmin = computed(() =>
     ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER'].includes(user.value?.role ?? ''),
+  )
+  const canManageGlobalHub = computed(() =>
+    ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'COUNSELOR'].includes(user.value?.role ?? ''),
   )
   const isStudent = computed(() => user.value?.role === 'STUDENT')
   const isParent = computed(() => user.value?.role === 'PARENT')
@@ -89,7 +95,11 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     role,
     isAdmin,
+    isSchoolExecutive,
+    isTeacher,
+    isCounselor,
     isTeacherOrAdmin,
+    canManageGlobalHub,
     isStudent,
     isParent,
     login,

@@ -3,17 +3,23 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import {
   Award,
   Building2,
-  CheckCircle2,
   Compass,
   ExternalLink,
   Globe,
   MessageCircle,
+  Plus,
   Search,
+  Settings2,
+  X,
 } from 'lucide-vue-next'
 import { apiRequest } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+import EmptyState from '@/components/common/EmptyState.vue'
+import SkeletonCard from '@/components/common/SkeletonCard.vue'
 import type {
   ConsultationRecord,
+  ConsultationRegisterResponse,
   GlobalCountry,
   GlobalProgram,
   GlobalScholarship,
@@ -22,47 +28,120 @@ import type {
 } from '@/types/api'
 
 const authStore = useAuthStore()
+const toast = useToast()
 
 const activeTab = ref<'programs' | 'universities' | 'scholarships' | 'countries'>('programs')
 const searchQuery = ref('')
+const loadingCatalog = ref(true)
 
 const countries = ref<GlobalCountry[]>([])
 const universities = ref<GlobalUniversity[]>([])
 const scholarships = ref<GlobalScholarship[]>([])
 const programs = ref<GlobalProgram[]>([])
-const myConsultations = ref<ConsultationRecord[]>([])
+const consultations = ref<ConsultationRecord[]>([])
 
 const submittingConsult = ref(false)
-const consultSuccessMsg = ref('')
+const showCreateModal = ref<'program' | 'university' | 'scholarship' | null>(null)
+const savingItem = ref(false)
 
 const consultForm = reactive({
   name: authStore.user?.fullName || '',
-  phone: '6281234567890',
+  phone: '',
   email: authStore.user?.email || '',
-  destinationCountry: 'United Kingdom',
-  intendedMajor: 'Computer Science',
+  destinationCountry: '',
+  intendedMajor: '',
   notes: '',
 })
 
-async function fetchCatalog() {
-  const params = searchQuery.value ? { search: searchQuery.value, page: 1, limit: 20 } : { page: 1, limit: 20 }
-  const [cRes, uRes, sRes, pRes] = await Promise.all([
-    apiRequest<PaginatedResponse<GlobalCountry>>({ method: 'GET', url: '/global/countries', params }),
-    apiRequest<PaginatedResponse<GlobalUniversity>>({ method: 'GET', url: '/global/universities', params }),
-    apiRequest<PaginatedResponse<GlobalScholarship>>({ method: 'GET', url: '/global/scholarships', params }),
-    apiRequest<PaginatedResponse<GlobalProgram>>({ method: 'GET', url: '/global/programs', params }),
-  ])
-  countries.value = cRes.items ?? []
-  universities.value = uRes.items ?? []
-  scholarships.value = sRes.items ?? []
-  programs.value = pRes.items ?? []
+const newProgram = reactive({
+  title: '',
+  slug: '',
+  description: '',
+  targetAudience: 'Siswa Kelas 10 - 12',
+  quota: 30,
+})
+
+const newUniversity = reactive({
+  name: '',
+  city: '',
+  countryId: '',
+  qsRank: 50,
+  website: '',
+  overview: '',
+})
+
+const newScholarship = reactive({
+  name: '',
+  countryId: '',
+  fundingType: 'FULL' as 'FULL' | 'PARTIAL',
+  deadline: '2027-01-31',
+  description: '',
+  applicationUrl: '',
+})
+
+function getCountryName(c?: string | { name: string } | null): string {
+  if (!c) return 'Internasional'
+  return typeof c === 'string' ? c : c.name
 }
 
-async function fetchMyConsultations() {
-  myConsultations.value = await apiRequest<ConsultationRecord[]>({
-    method: 'GET',
-    url: '/global/consultations/my',
-  })
+async function fetchCatalog() {
+  loadingCatalog.value = true
+  const params = searchQuery.value ? { search: searchQuery.value, page: 1, limit: 20 } : { page: 1, limit: 20 }
+  try {
+    const [cRes, uRes, sRes, pRes] = await Promise.all([
+      apiRequest<PaginatedResponse<GlobalCountry> | GlobalCountry[]>({
+        method: 'GET',
+        url: '/global/countries',
+        params,
+      }),
+      apiRequest<PaginatedResponse<GlobalUniversity> | GlobalUniversity[]>({
+        method: 'GET',
+        url: '/global/universities',
+        params,
+      }),
+      apiRequest<PaginatedResponse<GlobalScholarship> | GlobalScholarship[]>({
+        method: 'GET',
+        url: '/global/scholarships',
+        params,
+      }),
+      apiRequest<PaginatedResponse<GlobalProgram> | GlobalProgram[]>({
+        method: 'GET',
+        url: '/global/programs',
+        params,
+      }),
+    ])
+    countries.value = Array.isArray(cRes) ? cRes : cRes.items ?? []
+    universities.value = Array.isArray(uRes) ? uRes : uRes.items ?? []
+    scholarships.value = Array.isArray(sRes) ? sRes : sRes.items ?? []
+    programs.value = Array.isArray(pRes) ? pRes : pRes.items ?? []
+
+    if (countries.value.length > 0 && !newUniversity.countryId) {
+      newUniversity.countryId = countries.value[0].id
+      newScholarship.countryId = countries.value[0].id
+    }
+  } catch {
+    toast.error('Gagal memuat katalog Global & Career Hub')
+  } finally {
+    loadingCatalog.value = false
+  }
+}
+
+async function fetchConsultations() {
+  try {
+    if (authStore.canManageGlobalHub) {
+      consultations.value = await apiRequest<ConsultationRecord[]>({
+        method: 'GET',
+        url: '/global/consultations',
+      })
+    } else if (authStore.isStudent || authStore.isParent) {
+      consultations.value = await apiRequest<ConsultationRecord[]>({
+        method: 'GET',
+        url: '/global/consultations/my',
+      })
+    }
+  } catch {
+    consultations.value = []
+  }
 }
 
 watch(searchQuery, () => {
@@ -71,53 +150,165 @@ watch(searchQuery, () => {
 
 async function submitConsultation() {
   submittingConsult.value = true
-  consultSuccessMsg.value = ''
   try {
-    const res = await apiRequest<ConsultationRecord>({
+    const res = await apiRequest<ConsultationRegisterResponse>({
       method: 'POST',
       url: '/global/consultations',
       data: { ...consultForm },
     })
-    consultSuccessMsg.value = 'Pendaftaran konsultasi tersimpan! Membuka WhatsApp konselor...'
+    toast.success('Pendaftaran konsultasi tersimpan!', 'Membuka WhatsApp konselor...')
     consultForm.notes = ''
-    await fetchMyConsultations()
+    await fetchConsultations()
     const targetUrl = res.whatsappUrl || res.redirectUrl
     if (targetUrl) {
       window.open(targetUrl, '_blank', 'noopener,noreferrer')
     }
+  } catch {
+    toast.error('Gagal mengirim pendaftaran konsultasi')
   } finally {
     submittingConsult.value = false
   }
 }
 
+async function createGlobalItem() {
+  savingItem.value = true
+  try {
+    if (showCreateModal.value === 'program') {
+      const slug =
+        newProgram.slug.trim() ||
+        newProgram.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+      await apiRequest({
+        method: 'POST',
+        url: '/global/programs',
+        data: {
+          title: newProgram.title,
+          slug,
+          description: newProgram.description,
+          targetAudience: newProgram.targetAudience,
+          quota: Number(newProgram.quota),
+        },
+      })
+      toast.success('Program baru berhasil ditambahkan!')
+      newProgram.title = ''
+      newProgram.slug = ''
+      newProgram.description = ''
+    } else if (showCreateModal.value === 'university') {
+      await apiRequest({
+        method: 'POST',
+        url: '/global/universities',
+        data: {
+          name: newUniversity.name,
+          city: newUniversity.city,
+          countryId: newUniversity.countryId,
+          qsRank: Number(newUniversity.qsRank),
+          website: newUniversity.website || undefined,
+          overview: newUniversity.overview || undefined,
+        },
+      })
+      toast.success('Universitas mitra berhasil ditambahkan!')
+      newUniversity.name = ''
+      newUniversity.city = ''
+    } else if (showCreateModal.value === 'scholarship') {
+      await apiRequest({
+        method: 'POST',
+        url: '/global/scholarships',
+        data: {
+          name: newScholarship.name,
+          countryId: newScholarship.countryId || undefined,
+          fundingType: newScholarship.fundingType,
+          deadline: newScholarship.deadline,
+          description: newScholarship.description,
+          applicationUrl: newScholarship.applicationUrl || undefined,
+        },
+      })
+      toast.success('Informasi beasiswa berhasil ditambahkan!')
+      newScholarship.name = ''
+      newScholarship.description = ''
+    }
+    showCreateModal.value = null
+    await fetchCatalog()
+  } catch (err) {
+    toast.error(
+      'Gagal menyimpan data ke server',
+      (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Pastikan endpoint CRUD Global Hub sudah aktif di backend.',
+    )
+  } finally {
+    savingItem.value = false
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([fetchCatalog(), fetchMyConsultations()])
+  await Promise.all([fetchCatalog(), fetchConsultations()])
 })
 </script>
 
 <template>
   <div class="space-y-6">
-    <!-- Top Search & Tabs -->
+    <!-- Top Search, Tabs & Management Actions -->
     <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h2 class="text-xl font-bold text-slate-900 flex items-center gap-2">
             <Globe class="h-5 w-5 text-primary" />
             Global & Career Hub
           </h2>
           <p class="text-xs text-slate-500 mt-0.5">
-            Eksplorasi negara tujuan studi, universitas Top QS, beasiswa internasional, & program immersion.
+            {{
+              authStore.canManageGlobalHub
+                ? 'Kelola program immersion, katalog universitas, beasiswa, dan tindak lanjuti pendaftaran konsultasi siswa.'
+                : 'Eksplorasi negara tujuan studi, universitas Top QS, beasiswa internasional, & program immersion.'
+            }}
           </p>
         </div>
 
-        <div class="relative w-full md:w-72">
-          <Search class="h-4 w-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            v-model="searchQuery"
-            type="search"
-            placeholder="Cari negara, kampus, beasiswa..."
-            class="w-full rounded-xl border border-slate-200 pl-10 pr-3.5 py-2 text-sm focus:border-primary focus:outline-none"
-          />
+        <div class="flex flex-wrap items-center gap-2.5">
+          <div class="relative w-full sm:w-64">
+            <Search class="h-4 w-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              v-model="searchQuery"
+              type="search"
+              placeholder="Cari negara, kampus, beasiswa..."
+              class="w-full rounded-xl border border-slate-200 pl-10 pr-3.5 py-2 text-sm focus:border-primary focus:outline-none"
+            />
+          </div>
+
+          <template v-if="authStore.canManageGlobalHub">
+            <router-link
+              to="/admin/sdui-builder"
+              class="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <Settings2 class="h-4 w-4 text-primary" />
+              Desainer Halaman Program
+            </router-link>
+            <button
+              v-if="activeTab === 'programs'"
+              type="button"
+              @click="showCreateModal = 'program'"
+              class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90"
+            >
+              <Plus class="h-4 w-4" />
+              Tambah Program
+            </button>
+            <button
+              v-else-if="activeTab === 'universities'"
+              type="button"
+              @click="showCreateModal = 'university'"
+              class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90"
+            >
+              <Plus class="h-4 w-4" />
+              Tambah Kampus
+            </button>
+            <button
+              v-else-if="activeTab === 'scholarships'"
+              type="button"
+              @click="showCreateModal = 'scholarship'"
+              class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90"
+            >
+              <Plus class="h-4 w-4" />
+              Tambah Beasiswa
+            </button>
+          </template>
         </div>
       </div>
 
@@ -169,108 +360,222 @@ onMounted(async () => {
       </div>
     </div>
 
+    <SkeletonCard v-if="loadingCatalog" :count="3" :columns="2" />
+
     <!-- Catalog Content -->
-    <div v-if="activeTab === 'programs'" class="grid grid-cols-1 md:grid-cols-2 gap-5">
-      <router-link
-        v-for="prog in programs"
-        :key="prog.id"
-        :to="`/global/programs/${prog.id}`"
-        class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm hover:border-primary/50 transition space-y-3"
-      >
-        <div class="flex items-center justify-between">
-          <span class="rounded-full bg-primary-50 px-3 py-1 text-xs font-bold text-primary">
-            {{ prog.category }}
-          </span>
-          <span class="text-xs text-slate-500">{{ prog.batch }} • {{ prog.duration }}</span>
-        </div>
-        <h3 class="text-lg font-bold text-slate-900">{{ prog.title }}</h3>
-        <p class="text-sm text-slate-600">{{ prog.summary }}</p>
-        <p class="text-xs font-semibold text-primary pt-2">
-          Lihat Detail Program →
-        </p>
-      </router-link>
-    </div>
-
-    <div v-else-if="activeTab === 'universities'" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div
-        v-for="uni in universities"
-        :key="uni.id"
-        class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col justify-between gap-3"
-      >
-        <div>
-          <div class="flex items-center justify-between mb-2">
-            <span class="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700">
-              QS World Rank #{{ uni.qsRanking }}
-            </span>
-            <span v-if="uni.isPartner" class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700">
-              Mitra Sekolah
-            </span>
-          </div>
-          <h3 class="text-base font-bold text-slate-900">{{ uni.name }}</h3>
-          <p class="text-xs text-slate-500">{{ uni.city }}, {{ uni.country }}</p>
-          <div class="flex flex-wrap gap-1.5 mt-3">
-            <span
-              v-for="maj in uni.popularMajors"
-              :key="maj"
-              class="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700"
-            >
-              {{ maj }}
-            </span>
-          </div>
-        </div>
-        <a
-          :href="uni.websiteUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline pt-2"
-        >
-          Kunjungi Website Resmi
-          <ExternalLink class="h-3.5 w-3.5" />
-        </a>
-      </div>
-    </div>
-
-    <div v-else-if="activeTab === 'scholarships'" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div
-        v-for="sch in scholarships"
-        :key="sch.id"
-        class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-2"
-      >
-        <div class="flex items-center justify-between">
-          <span
-            :class="[
-              'rounded-full px-2.5 py-0.5 text-xs font-bold',
-              sch.coverage === 'Full' ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700',
-            ]"
+    <template v-else>
+      <div v-if="activeTab === 'programs'">
+        <EmptyState
+          v-if="programs.length === 0"
+          title="Belum Ada Program Immersion"
+          description="Program kunjungan kampus dan immersion luar negeri akan tampil di sini."
+          :icon="Compass"
+        />
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <router-link
+            v-for="prog in programs"
+            :key="prog.id"
+            :to="`/global/programs/${prog.id}`"
+            class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm hover:border-primary/50 transition space-y-3 block"
           >
-            {{ sch.coverage }} Funded
-          </span>
-          <span class="text-xs text-slate-400">Deadline: {{ sch.deadline }}</span>
+            <div class="flex items-center justify-between">
+              <span class="rounded-full bg-primary-50 px-3 py-1 text-xs font-bold text-primary">
+                {{ prog.category || prog.targetAudience || 'Program Global' }}
+              </span>
+              <span class="text-xs text-slate-500">
+                {{ prog.quota ? `Kuota ${prog.quota} Siswa` : prog.duration || '' }}
+              </span>
+            </div>
+            <h3 class="text-lg font-bold text-slate-900">{{ prog.title }}</h3>
+            <p class="text-sm text-slate-600 line-clamp-2">{{ prog.description || prog.summary }}</p>
+            <p class="text-xs font-semibold text-primary pt-2">
+              Lihat Detail Program →
+            </p>
+          </router-link>
         </div>
-        <h3 class="text-base font-bold text-slate-900">{{ sch.title }}</h3>
-        <p class="text-xs font-semibold text-primary">{{ sch.provider }} • {{ sch.country }}</p>
-        <p class="text-xs text-slate-600 leading-relaxed">{{ sch.description }}</p>
+      </div>
+
+      <div v-else-if="activeTab === 'universities'">
+        <EmptyState
+          v-if="universities.length === 0"
+          title="Belum Ada Data Universitas"
+          description="Data universitas mitra dan peringkat QS dunia belum tersedia."
+          :icon="Building2"
+        />
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div
+            v-for="uni in universities"
+            :key="uni.id"
+            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col justify-between gap-3"
+          >
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span
+                  v-if="uni.qsRank || uni.qsRanking"
+                  class="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700"
+                >
+                  QS World Rank #{{ uni.qsRank || uni.qsRanking }}
+                </span>
+                <span v-if="uni.isPartner" class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700">
+                  Mitra Sekolah
+                </span>
+              </div>
+              <h3 class="text-base font-bold text-slate-900">{{ uni.name }}</h3>
+              <p class="text-xs text-slate-500">
+                {{ [uni.city, getCountryName(uni.country)].filter(Boolean).join(', ') }}
+              </p>
+              <p v-if="uni.overview" class="text-xs text-slate-600 mt-2 line-clamp-2">
+                {{ uni.overview }}
+              </p>
+            </div>
+            <a
+              v-if="uni.website || uni.websiteUrl"
+              :href="(uni.website || uni.websiteUrl)!"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline pt-2"
+            >
+              Kunjungi Website Resmi
+              <ExternalLink class="h-3.5 w-3.5" />
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div v-else-if="activeTab === 'scholarships'">
+        <EmptyState
+          v-if="scholarships.length === 0"
+          title="Belum Ada Data Beasiswa"
+          description="Informasi beasiswa penuh maupun parsial akan tampil di sini."
+          :icon="Award"
+        />
+        <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div
+            v-for="sch in scholarships"
+            :key="sch.id"
+            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-2"
+          >
+            <div class="flex items-center justify-between">
+              <span
+                :class="[
+                  'rounded-full px-2.5 py-0.5 text-xs font-bold',
+                  (sch.fundingType || sch.coverage)?.toUpperCase() === 'FULL'
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-sky-50 text-sky-700',
+                ]"
+              >
+                {{ (sch.fundingType || sch.coverage)?.toUpperCase() === 'FULL' ? 'Beasiswa Penuh' : 'Beasiswa Parsial' }}
+              </span>
+              <span v-if="sch.deadline" class="text-xs text-slate-400">
+                Batas: {{ new Date(sch.deadline).toLocaleDateString('id-ID') }}
+              </span>
+            </div>
+            <h3 class="text-base font-bold text-slate-900">{{ sch.name || sch.title }}</h3>
+            <p class="text-xs font-semibold text-primary">
+              {{ getCountryName(sch.country) }}
+            </p>
+            <p class="text-xs text-slate-600 leading-relaxed">{{ sch.description || sch.eligibility }}</p>
+          </div>
+        </div>
+      </div>
+
+      <div v-else-if="activeTab === 'countries'">
+        <EmptyState
+          v-if="countries.length === 0"
+          title="Belum Ada Data Negara"
+          description="Daftar negara tujuan studi luar negeri belum tersedia."
+          :icon="Globe"
+        />
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div
+            v-for="cnt in countries"
+            :key="cnt.id"
+            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-2"
+          >
+            <div class="text-3xl">{{ cnt.flagEmoji || '🌍' }}</div>
+            <h3 class="text-base font-bold text-slate-900">{{ cnt.name }}</h3>
+            <p class="text-xs text-slate-500">{{ cnt.code }}</p>
+            <p v-if="cnt.description" class="text-xs text-slate-600 leading-relaxed">{{ cnt.description }}</p>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- MANAGEMENT VIEW FOR ADMIN / PRINCIPAL / COUNSELOR -->
+    <div
+      v-if="authStore.canManageGlobalHub"
+      class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4"
+    >
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+            <MessageCircle class="h-5 w-5 text-primary" />
+            Manajemen Pendaftaran Konsultasi Siswa ({{ consultations.length }})
+          </h3>
+          <p class="text-xs text-slate-500">
+            Daftar pengajuan konsultasi studi luar negeri dari siswa dan orang tua di sekolah Anda.
+          </p>
+        </div>
+      </div>
+
+      <EmptyState
+        v-if="consultations.length === 0"
+        title="Belum Ada Pengajuan Konsultasi"
+        description="Pengajuan konsultasi studi luar negeri dari siswa atau orang tua akan muncul di tabel ini."
+        :icon="MessageCircle"
+      />
+
+      <div v-else class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead>
+            <tr class="border-b border-slate-200 text-xs font-bold uppercase text-slate-500">
+              <th class="py-3 pr-4">Pemohon</th>
+              <th class="py-3 px-4">Negara & Jurusan</th>
+              <th class="py-3 px-4">Catatan</th>
+              <th class="py-3 px-4">Status</th>
+              <th class="py-3 pl-4 text-right">Aksi</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            <tr v-for="item in consultations" :key="item.id">
+              <td class="py-3 pr-4">
+                <p class="font-bold text-slate-900">{{ item.name }}</p>
+                <p class="text-xs text-slate-500">{{ item.phone }} • {{ item.email || '-' }}</p>
+              </td>
+              <td class="py-3 px-4">
+                <p class="font-semibold text-slate-800">{{ item.destinationCountry || '-' }}</p>
+                <p class="text-xs text-slate-500">{{ item.intendedMajor || '-' }}</p>
+              </td>
+              <td class="py-3 px-4 text-xs text-slate-600 max-w-xs truncate">
+                {{ item.notes || '-' }}
+              </td>
+              <td class="py-3 px-4">
+                <span class="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700">
+                  {{ item.status }}
+                </span>
+              </td>
+              <td class="py-3 pl-4 text-right">
+                <a
+                  :href="`https://wa.me/${item.phone.replace(/[^0-9]/g, '')}`"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-slate-50"
+                >
+                  Hubungi WA
+                  <ExternalLink class="h-3 w-3" />
+                </a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
-    <div v-else-if="activeTab === 'countries'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      <div
-        v-for="cnt in countries"
-        :key="cnt.id"
-        class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-2"
-      >
-        <div class="text-3xl">{{ cnt.flagEmoji || '🌍' }}</div>
-        <h3 class="text-base font-bold text-slate-900">{{ cnt.name }}</h3>
-        <p class="text-xs text-slate-500">{{ cnt.region }}</p>
-        <p class="text-xs text-slate-600 leading-relaxed">{{ cnt.description }}</p>
-        <p class="text-[11px] font-semibold text-primary pt-1">
-          {{ cnt.universityCount }} Kampus • {{ cnt.scholarshipCount }} Beasiswa
-        </p>
-      </div>
-    </div>
-
-    <!-- Konsultasi Studi Luar Negeri + Riwayat -->
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <!-- STUDENT & PARENT VIEW: CONSULTATION REGISTRATION + MY HISTORY -->
+    <div
+      v-else-if="authStore.isStudent || authStore.isParent"
+      class="grid grid-cols-1 lg:grid-cols-12 gap-6"
+    >
       <div class="lg:col-span-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
         <div>
           <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -282,14 +587,6 @@ onMounted(async () => {
           </p>
         </div>
 
-        <div
-          v-if="consultSuccessMsg"
-          class="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-700"
-        >
-          <CheckCircle2 class="h-4 w-4" />
-          {{ consultSuccessMsg }}
-        </div>
-
         <form @submit.prevent="submitConsultation" class="space-y-3">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
@@ -298,17 +595,17 @@ onMounted(async () => {
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-700 mb-1">No. WhatsApp</label>
-              <input v-model="consultForm.phone" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              <input v-model="consultForm.phone" required type="text" placeholder="628..." class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
             </div>
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="block text-xs font-semibold text-slate-700 mb-1">Negara Tujuan</label>
-              <input v-model="consultForm.destinationCountry" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              <input v-model="consultForm.destinationCountry" required type="text" placeholder="United Kingdom" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-700 mb-1">Rencana Jurusan</label>
-              <input v-model="consultForm.intendedMajor" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              <input v-model="consultForm.intendedMajor" required type="text" placeholder="Computer Science" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
             </div>
           </div>
           <div>
@@ -328,9 +625,15 @@ onMounted(async () => {
 
       <div class="lg:col-span-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
         <h3 class="text-base font-bold text-slate-900">Riwayat Konsultasi Saya</h3>
-        <div class="space-y-3">
+        <EmptyState
+          v-if="consultations.length === 0"
+          title="Belum Ada Riwayat Konsultasi"
+          description="Anda belum pernah mendaftar sesi konsultasi studi luar negeri."
+          :icon="MessageCircle"
+        />
+        <div v-else class="space-y-3">
           <div
-            v-for="item in myConsultations"
+            v-for="item in consultations"
             :key="item.id"
             class="rounded-xl border border-slate-100 bg-slate-50 p-4 flex items-start justify-between gap-3"
           >
@@ -354,6 +657,120 @@ onMounted(async () => {
             </span>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- MODAL TAMBAH PROGRAM / KAMPUS / BEASISWA (ADMIN / PRINCIPAL / COUNSELOR) -->
+    <div
+      v-if="showCreateModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+    >
+      <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-base font-bold text-slate-900">
+            {{
+              showCreateModal === 'program'
+                ? 'Tambah Program Global / Sekolah'
+                : showCreateModal === 'university'
+                  ? 'Tambah Universitas Mitra'
+                  : 'Tambah Informasi Beasiswa'
+            }}
+          </h3>
+          <button @click="showCreateModal = null" class="text-slate-400 hover:text-slate-600">
+            <X class="h-5 w-5" />
+          </button>
+        </div>
+
+        <form @submit.prevent="createGlobalItem" class="space-y-3">
+          <template v-if="showCreateModal === 'program'">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Judul Program</label>
+              <input v-model="newProgram.title" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">Target Peserta</label>
+                <input v-model="newProgram.targetAudience" type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">Kuota Siswa</label>
+                <input v-model.number="newProgram.quota" type="number" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Deskripsi Program</label>
+              <textarea v-model="newProgram.description" required rows="3" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+          </template>
+
+          <template v-else-if="showCreateModal === 'university'">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Nama Universitas</label>
+              <input v-model="newUniversity.name" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">Kota</label>
+                <input v-model="newUniversity.city" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">QS World Rank</label>
+                <input v-model.number="newUniversity.qsRank" type="number" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Negara</label>
+              <select v-model="newUniversity.countryId" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                <option v-for="c in countries" :key="c.id" :value="c.id">{{ c.name }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Website Resmi</label>
+              <input v-model="newUniversity.website" type="url" placeholder="https://..." class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+          </template>
+
+          <template v-else-if="showCreateModal === 'scholarship'">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Nama Beasiswa</label>
+              <input v-model="newScholarship.name" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">Jenis Pendanaan</label>
+                <select v-model="newScholarship.fundingType" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                  <option value="FULL">Beasiswa Penuh (Full)</option>
+                  <option value="PARTIAL">Beasiswa Parsial</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">Batas Pendaftaran</label>
+                <input v-model="newScholarship.deadline" type="date" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Deskripsi & Syarat</label>
+              <textarea v-model="newScholarship.description" required rows="3" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+          </template>
+
+          <div class="pt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              @click="showCreateModal = null"
+              class="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600"
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              :disabled="savingItem"
+              class="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60"
+            >
+              {{ savingItem ? 'Menyimpan...' : 'Simpan Data' }}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   </div>

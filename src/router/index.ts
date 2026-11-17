@@ -55,8 +55,8 @@ const routes: RouteRecordRaw[] = [
     name: 'admin-sdui-builder',
     component: () => import('@/views/admin/SduiBuilderView.vue'),
     meta: {
-      title: 'SDUI Block Builder',
-      roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL'],
+      title: 'Desainer Halaman Program',
+      roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'COUNSELOR'],
     },
   },
   // LMS Modules
@@ -64,13 +64,19 @@ const routes: RouteRecordRaw[] = [
     path: '/lms/courses',
     name: 'lms-courses',
     component: () => import('@/views/lms/CoursesView.vue'),
-    meta: { title: 'Daftar Kursus & Kelas (LMS)' },
+    meta: {
+      title: 'Daftar Mata Pelajaran (LMS)',
+      roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER', 'STUDENT'],
+    },
   },
   {
     path: '/lms/courses/:id',
     name: 'lms-course-detail',
     component: () => import('@/views/lms/CourseDetailView.vue'),
-    meta: { title: 'Workspace Kursus' },
+    meta: {
+      title: 'Workspace Mata Pelajaran',
+      roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER', 'STUDENT'],
+    },
   },
   // CBT & Grading Modules
   {
@@ -86,13 +92,19 @@ const routes: RouteRecordRaw[] = [
     path: '/cbt/exams',
     name: 'cbt-exams',
     component: () => import('@/views/cbt/CbtExamsView.vue'),
-    meta: { title: 'Jadwal Ujian CBT' },
+    meta: {
+      title: 'Jadwal Ujian CBT',
+      roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER', 'STUDENT'],
+    },
   },
   {
     path: '/cbt/exams/:id/run',
     name: 'cbt-exam-runner',
     component: () => import('@/views/cbt/CbtExamRunnerView.vue'),
-    meta: { title: 'Sesi Ujian CBT' },
+    meta: {
+      title: 'Sesi Ujian CBT',
+      roles: ['STUDENT'],
+    },
   },
   {
     path: '/cbt/grades',

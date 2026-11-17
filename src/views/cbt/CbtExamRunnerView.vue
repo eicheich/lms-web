@@ -71,13 +71,29 @@ onMounted(async () => {
   }
 
   try {
-    const res = await apiRequest<StartCbtAttemptResponse>({
+    const startRes = await apiRequest<StartCbtAttemptResponse & { id?: string }>({
       method: 'POST',
       url: `/cbt/exams/${examId}/start`,
     })
-    attempt.value = res
-    questions.value = res.questions ?? []
-    const diffSec = Math.max(60, Math.floor((new Date(res.expiresAt).getTime() - Date.now()) / 1000))
+    const attemptId = startRes.attemptId || startRes.id || ''
+    let loadedQuestions = startRes.questions ?? []
+    let durationMin = 60
+
+    if (loadedQuestions.length === 0) {
+      const detailRes = await apiRequest<{ exam?: { durationMinutes?: number }; questions?: Question[]; durationMinutes?: number }>({
+        method: 'GET',
+        url: `/cbt/exams/${examId}`,
+      })
+      loadedQuestions = detailRes.questions ?? []
+      durationMin = detailRes.exam?.durationMinutes || detailRes.durationMinutes || 60
+    }
+
+    attempt.value = { ...startRes, attemptId, questions: loadedQuestions }
+    questions.value = loadedQuestions
+
+    const diffSec = startRes.expiresAt
+      ? Math.max(60, Math.floor((new Date(startRes.expiresAt).getTime() - Date.now()) / 1000))
+      : durationMin * 60
     remainingSeconds.value = diffSec
 
     timerInterval = setInterval(() => {

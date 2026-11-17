@@ -60,28 +60,126 @@ onMounted(async () => {
         </p>
       </div>
       <div class="flex flex-wrap gap-2.5">
-        <router-link
-          to="/lms/courses"
-          class="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition"
-        >
-          <BookOpen class="h-4 w-4" />
-          Buka Kursus LMS
-        </router-link>
-        <router-link
-          v-if="authStore.role !== 'PARENT'"
-          to="/cbt/exams"
-          class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
-        >
-          <ClipboardCheck class="h-4 w-4 text-secondary" />
-          Ujian CBT
-        </router-link>
-        <router-link
-          to="/cbt/grades"
-          class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
-        >
-          <Award class="h-4 w-4 text-amber-500" />
-          Nilai & Rapor
-        </router-link>
+        <!-- Admin / Principal -->
+        <template v-if="authStore.isSchoolExecutive">
+          <router-link
+            to="/academic/classes"
+            class="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition"
+          >
+            Kelola Kelas
+          </router-link>
+          <router-link
+            to="/lms/courses"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            <BookOpen class="h-4 w-4 text-primary" />
+            Mata Pelajaran
+          </router-link>
+          <router-link
+            to="/global"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            <Globe class="h-4 w-4 text-secondary" />
+            Kelola Global Hub
+          </router-link>
+          <router-link
+            to="/cbt/grades"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            <Award class="h-4 w-4 text-amber-500" />
+            Finalisasi Rapor
+          </router-link>
+        </template>
+
+        <!-- Teacher -->
+        <template v-else-if="authStore.isTeacher">
+          <router-link
+            to="/attendance"
+            class="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition"
+          >
+            Isi Absensi Hari Ini
+          </router-link>
+          <router-link
+            to="/lms/courses"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            <BookOpen class="h-4 w-4 text-primary" />
+            Materi & Koreksi Tugas
+          </router-link>
+          <router-link
+            to="/cbt/exams"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            <ClipboardCheck class="h-4 w-4 text-secondary" />
+            Bank Soal & CBT
+          </router-link>
+        </template>
+
+        <!-- Counselor -->
+        <template v-else-if="authStore.isCounselor">
+          <router-link
+            to="/global"
+            class="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition"
+          >
+            <Globe class="h-4 w-4" />
+            Kelola Konsultasi & Global Hub
+          </router-link>
+          <router-link
+            to="/attendance"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            Rekap Kehadiran Siswa
+          </router-link>
+        </template>
+
+        <!-- Parent -->
+        <template v-else-if="authStore.isParent">
+          <router-link
+            to="/attendance"
+            class="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition"
+          >
+            Kehadiran Anak
+          </router-link>
+          <router-link
+            to="/cbt/grades"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            <Award class="h-4 w-4 text-amber-500" />
+            Rapor Anak
+          </router-link>
+          <router-link
+            to="/global"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            <Globe class="h-4 w-4 text-secondary" />
+            Konsultasi Studi Global
+          </router-link>
+        </template>
+
+        <!-- Student -->
+        <template v-else>
+          <router-link
+            to="/lms/courses"
+            class="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition"
+          >
+            <BookOpen class="h-4 w-4" />
+            Ruang Belajar (LMS)
+          </router-link>
+          <router-link
+            to="/cbt/exams"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            <ClipboardCheck class="h-4 w-4 text-secondary" />
+            Ujian CBT
+          </router-link>
+          <router-link
+            to="/cbt/grades"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            <Award class="h-4 w-4 text-amber-500" />
+            Nilai & Rapor
+          </router-link>
+        </template>
       </div>
     </div>
 
