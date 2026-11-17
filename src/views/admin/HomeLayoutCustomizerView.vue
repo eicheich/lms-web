@@ -14,8 +14,8 @@ const blockMeta: Record<HomeBlockKey, { title: string; desc: string }> = {
     desc: 'Banner sambutan gradien dengan tombol ajakan ke Global Hub.',
   },
   CAREER_STATS: {
-    title: 'Statistik Karir & Alumni',
-    desc: 'Tiga kartu pencapaian alumni, negara mitra, dan penerima beasiswa.',
+    title: 'Ringkasan Katalog Global',
+    desc: 'Jumlah program, destinasi, dan beasiswa dari data katalog yang tersedia.',
   },
   GLOBAL_PROGRAMS: {
     title: 'Program Immersion & Global',

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   Award,
   Building2,
@@ -10,7 +10,6 @@ import {
   Pencil,
   Plus,
   Search,
-  Settings2,
   Trash2,
   X,
 } from 'lucide-vue-next'
@@ -42,6 +41,25 @@ const universities = ref<GlobalUniversity[]>([])
 const scholarships = ref<GlobalScholarship[]>([])
 const programs = ref<GlobalProgram[]>([])
 const consultations = ref<ConsultationRecord[]>([])
+const consultationSearch = ref('')
+const consultationStatus = ref('ALL')
+
+const consultationStatuses = computed(() => [
+  'ALL',
+  ...new Set(consultations.value.map((item) => item.status).filter(Boolean)),
+])
+
+const filteredConsultations = computed(() => {
+  const query = consultationSearch.value.trim().toLowerCase()
+  return consultations.value.filter((item) => {
+    const matchesStatus = consultationStatus.value === 'ALL' || item.status === consultationStatus.value
+    const haystack = [item.name, item.email, item.phone, item.destinationCountry, item.intendedMajor]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return matchesStatus && (!query || haystack.includes(query))
+  })
+})
 
 const submittingConsult = ref(false)
 const showCreateModal = ref<'program' | 'university' | 'scholarship' | null>(null)
@@ -361,13 +379,6 @@ onMounted(async () => {
           </div>
 
           <template v-if="authStore.canManageGlobalHub">
-            <router-link
-              to="/admin/sdui-builder"
-              class="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <Settings2 class="h-4 w-4 text-primary" />
-              Desainer Halaman Program
-            </router-link>
             <button
               v-if="activeTab === 'programs'"
               type="button"
@@ -670,6 +681,23 @@ onMounted(async () => {
         </div>
       </div>
 
+      <div v-if="consultations.length" class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_220px]">
+        <div class="relative">
+          <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            v-model="consultationSearch"
+            type="search"
+            placeholder="Cari nama, kontak, negara, atau jurusan..."
+            class="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm"
+          />
+        </div>
+        <select v-model="consultationStatus" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+          <option v-for="status in consultationStatuses" :key="status" :value="status">
+            {{ status === 'ALL' ? 'Semua status' : status }}
+          </option>
+        </select>
+      </div>
+
       <EmptyState
         v-if="consultations.length === 0"
         title="Belum Ada Pengajuan Konsultasi"
@@ -677,7 +705,7 @@ onMounted(async () => {
         :icon="MessageCircle"
       />
 
-      <div v-else class="overflow-x-auto">
+      <div v-else-if="filteredConsultations.length" class="overflow-x-auto">
         <table class="w-full text-left text-sm">
           <thead>
             <tr class="border-b border-slate-200 text-xs font-bold uppercase text-slate-500">
@@ -689,7 +717,7 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">
-            <tr v-for="item in consultations" :key="item.id">
+            <tr v-for="item in filteredConsultations" :key="item.id">
               <td class="py-3 pr-4">
                 <p class="font-bold text-slate-900">{{ item.name }}</p>
                 <p class="text-xs text-slate-500">{{ item.phone }} • {{ item.email || '-' }}</p>
@@ -698,7 +726,7 @@ onMounted(async () => {
                 <p class="font-semibold text-slate-800">{{ item.destinationCountry || '-' }}</p>
                 <p class="text-xs text-slate-500">{{ item.intendedMajor || '-' }}</p>
               </td>
-              <td class="py-3 px-4 text-xs text-slate-600 max-w-xs truncate">
+              <td class="py-3 px-4 text-sm text-slate-600 max-w-sm whitespace-normal leading-relaxed">
                 {{ item.notes || '-' }}
               </td>
               <td class="py-3 px-4">
@@ -721,6 +749,12 @@ onMounted(async () => {
           </tbody>
         </table>
       </div>
+      <EmptyState
+        v-else
+        title="Pengajuan Tidak Ditemukan"
+        description="Ubah kata pencarian atau filter status untuk melihat pengajuan lainnya."
+        :icon="Search"
+      />
     </div>
 
     <!-- STUDENT & PARENT VIEW: CONSULTATION REGISTRATION + MY HISTORY -->

@@ -1,18 +1,23 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft, ArrowRight, CheckCircle2, Clock, Flag, Send } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, CheckCircle2, Clock, Flag, Play, Send, ShieldCheck } from 'lucide-vue-next'
 import { apiRequest } from '@/services/api'
 import { useToast } from '@/composables/useToast'
+import { useAuthStore } from '@/stores/auth'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import SkeletonCard from '@/components/common/SkeletonCard.vue'
-import type { Question, StartCbtAttemptResponse, SubmitCbtAttemptResponse } from '@/types/api'
+import type { CbtExam, Question, StartCbtAttemptResponse, SubmitCbtAttemptResponse } from '@/types/api'
 
 const route = useRoute()
 const toast = useToast()
+const authStore = useAuthStore()
 const examId = route.params.id as string
-const draftStorageKey = `aliman_cbt_draft_${examId}`
+const draftStorageKey = computed(
+  () => `aliman_cbt_draft_${authStore.user?.id || authStore.user?.userId || 'student'}_${examId}`,
+)
 
+const exam = ref<CbtExam | null>(null)
 const attempt = ref<StartCbtAttemptResponse | null>(null)
 const questions = ref<Question[]>([])
 const currentIndex = ref(0)
@@ -23,6 +28,8 @@ const result = ref<SubmitCbtAttemptResponse | null>(null)
 const loading = ref(true)
 const submitting = ref(false)
 const showConfirmSubmit = ref(false)
+const startError = ref('')
+const draftSavedAt = ref<Date | null>(null)
 
 let timerInterval: ReturnType<typeof setInterval> | null = null
 
@@ -44,7 +51,9 @@ watch(
   answers,
   (val) => {
     try {
-      sessionStorage.setItem(draftStorageKey, JSON.stringify(val))
+      if (!attempt.value) return
+      sessionStorage.setItem(draftStorageKey.value, JSON.stringify(val))
+      draftSavedAt.value = new Date()
     } catch {
       // ignore storage quota errors
     }
@@ -53,7 +62,7 @@ watch(
 )
 
 function handleKeydown(e: KeyboardEvent) {
-  if (result.value || showConfirmSubmit.value) return
+  if (!attempt.value || result.value || showConfirmSubmit.value) return
   if (e.key === 'ArrowRight' && currentIndex.value < questions.value.length - 1) {
     currentIndex.value++
   } else if (e.key === 'ArrowLeft' && currentIndex.value > 0) {
@@ -61,17 +70,31 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (attempt.value && !result.value) event.preventDefault()
+}
+
 onMounted(async () => {
   window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('beforeunload', handleBeforeUnload)
   try {
-    const savedDraft = sessionStorage.getItem(draftStorageKey)
-    if (savedDraft) {
-      answers.value = JSON.parse(savedDraft) as Record<string, string>
-    }
-  } catch {
-    // ignore
+    const detail = await apiRequest<CbtExam | { exam: CbtExam; questions?: Question[] }>({
+      method: 'GET',
+      url: `/cbt/exams/${examId}`,
+    })
+    exam.value = 'exam' in detail ? { ...detail.exam, questions: detail.questions ?? [] } : detail
+  } catch (err) {
+    startError.value =
+      (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+      'Detail ujian belum dapat dimuat.'
+  } finally {
+    loading.value = false
   }
+})
 
+async function startExam() {
+  loading.value = true
+  startError.value = ''
   try {
     const startRes = await apiRequest<StartCbtAttemptResponse & { id?: string }>({
       method: 'POST',
@@ -79,19 +102,21 @@ onMounted(async () => {
     })
     const attemptId = startRes.attemptId || startRes.id || ''
     let loadedQuestions = startRes.questions ?? []
-    let durationMin = 60
+    let durationMin = exam.value?.durationMinutes ?? 60
 
     if (loadedQuestions.length === 0) {
-      const detailRes = await apiRequest<{ exam?: { durationMinutes?: number }; questions?: Question[]; durationMinutes?: number }>({
-        method: 'GET',
-        url: `/cbt/exams/${examId}`,
-      })
-      loadedQuestions = detailRes.questions ?? []
-      durationMin = detailRes.exam?.durationMinutes || detailRes.durationMinutes || 60
+      loadedQuestions = exam.value?.questions ?? []
     }
 
     attempt.value = { ...startRes, attemptId, questions: loadedQuestions }
     questions.value = loadedQuestions
+
+    try {
+      const savedDraft = sessionStorage.getItem(draftStorageKey.value)
+      if (savedDraft) answers.value = JSON.parse(savedDraft) as Record<string, string>
+    } catch {
+      // Ignore invalid local draft.
+    }
 
     const diffSec = startRes.expiresAt
       ? Math.max(60, Math.floor((new Date(startRes.expiresAt).getTime() - Date.now()) / 1000))
@@ -99,23 +124,24 @@ onMounted(async () => {
     remainingSeconds.value = diffSec
 
     timerInterval = setInterval(() => {
-      if (remainingSeconds.value > 0) {
-        remainingSeconds.value -= 1
+      if (remainingSeconds.value > 1) remainingSeconds.value -= 1
+      else if (!submitting.value && !result.value) {
+        remainingSeconds.value = 0
+        void submitExam(true)
       }
     }, 1000)
   } catch (err) {
-    toast.error(
-      'Gagal memulai sesi ujian',
+    startError.value =
       (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        'Pastikan jadwal ujian sedang aktif.',
-    )
+      'Sesi belum dapat dimulai. Pastikan jadwal ujian sedang aktif.'
   } finally {
     loading.value = false
   }
-})
+}
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   if (timerInterval) clearInterval(timerInterval)
 })
 
@@ -127,7 +153,7 @@ function toggleFlag(qId: string) {
   flagged.value = { ...flagged.value, [qId]: !flagged.value[qId] }
 }
 
-async function submitExam() {
+async function submitExam(automatic = false) {
   if (!attempt.value) return
   submitting.value = true
   try {
@@ -136,10 +162,10 @@ async function submitExam() {
       url: `/cbt/attempts/${attempt.value.attemptId}/submit`,
       data: { answers: answers.value },
     })
-    sessionStorage.removeItem(draftStorageKey)
+    sessionStorage.removeItem(draftStorageKey.value)
     showConfirmSubmit.value = false
     if (timerInterval) clearInterval(timerInterval)
-    toast.success('Ujian berhasil dikumpulkan!')
+    toast.success(automatic ? 'Waktu habis. Jawaban berhasil dikumpulkan.' : 'Ujian berhasil dikumpulkan!')
   } catch {
     toast.error('Gagal mengumpulkan jawaban ujian. Coba lagi.')
   } finally {
@@ -150,6 +176,59 @@ async function submitExam() {
 
 <template>
   <SkeletonCard v-if="loading" :count="2" />
+
+  <div
+    v-else-if="!attempt && exam"
+    class="mx-auto max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 md:p-8 shadow-sm space-y-6"
+  >
+    <div class="flex items-start gap-4">
+      <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary-50 text-primary">
+        <ShieldCheck class="h-6 w-6" />
+      </div>
+      <div>
+        <p class="text-sm font-semibold text-primary">Persiapan ujian</p>
+        <h2 class="mt-1 text-2xl font-bold text-slate-900">{{ exam.title }}</h2>
+        <p class="mt-2 text-sm leading-relaxed text-slate-600">
+          Timer dimulai setelah Anda menekan tombol mulai. Pastikan koneksi stabil dan selesaikan ujian pada perangkat ini.
+        </p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div class="rounded-2xl bg-slate-50 p-4">
+        <p class="text-sm text-slate-500">Durasi</p>
+        <p class="mt-1 font-bold text-slate-900">{{ exam.durationMinutes }} menit</p>
+      </div>
+      <div class="rounded-2xl bg-slate-50 p-4">
+        <p class="text-sm text-slate-500">Jumlah soal</p>
+        <p class="mt-1 font-bold text-slate-900">{{ exam.questions?.length || exam.questionIds?.length || '—' }}</p>
+      </div>
+      <div class="rounded-2xl bg-slate-50 p-4">
+        <p class="text-sm text-slate-500">Nilai minimum</p>
+        <p class="mt-1 font-bold text-slate-900">{{ exam.passingScore }}</p>
+      </div>
+    </div>
+
+    <div v-if="startError" class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+      {{ startError }}
+    </div>
+
+    <div class="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+      <router-link to="/cbt/exams" class="rounded-xl border border-slate-200 px-5 py-3 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50">
+        Kembali
+      </router-link>
+      <button type="button" class="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white hover:opacity-90" @click="startExam">
+        <Play class="h-4 w-4" />
+        Mulai Ujian
+      </button>
+    </div>
+  </div>
+
+  <div v-else-if="!attempt && startError" class="mx-auto max-w-xl rounded-2xl border border-red-200 bg-red-50 p-6 text-center">
+    <p class="font-semibold text-red-900">Ujian belum dapat dibuka</p>
+    <p class="mt-2 text-sm text-red-700">{{ startError }}</p>
+    <router-link to="/cbt/exams" class="mt-4 inline-flex rounded-xl bg-white px-4 py-2 text-sm font-semibold text-red-700 shadow-sm">Kembali ke daftar ujian</router-link>
+  </div>
 
   <!-- Result Summary -->
   <div
@@ -192,7 +271,7 @@ async function submitExam() {
   </div>
 
   <!-- Active Exam Runner -->
-  <div v-else class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+  <div v-else-if="attempt" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
     <!-- Question Area -->
     <div class="lg:col-span-8 rounded-2xl border border-slate-200 bg-white p-6 md:p-8 shadow-sm flex flex-col justify-between space-y-6">
       <div v-if="currentQuestion" class="space-y-5">
@@ -288,6 +367,9 @@ async function submitExam() {
     <!-- Navigation & Timer Panel -->
     <div class="lg:col-span-4 space-y-4">
       <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+        <p class="text-xs font-medium text-emerald-700">
+          {{ draftSavedAt ? `Jawaban tersimpan di perangkat pukul ${draftSavedAt.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}` : 'Jawaban akan tersimpan otomatis di perangkat ini.' }}
+        </p>
         <div
           :class="[
             'flex items-center justify-between rounded-xl p-3 border',

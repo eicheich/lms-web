@@ -9,11 +9,14 @@ import {
   ExternalLink,
   FileText,
   Link as LinkIcon,
+  Pencil,
   Plus,
+  Search,
   Send,
+  Trash2,
   Video,
 } from 'lucide-vue-next'
-import { apiRequest, isModuleLockedError } from '@/services/api'
+import { apiRequest, isModuleLockedError, normalizePaginated } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import LockedModuleBanner from '@/components/common/LockedModuleBanner.vue'
@@ -25,6 +28,7 @@ import type {
   Course,
   Material,
   MaterialContentType,
+  PaginatedResponse,
   SchoolClass,
   Submission,
 } from '@/types/api'
@@ -54,6 +58,20 @@ const loading = ref(true)
 const moduleLocked = ref(false)
 const feedbackBanner = ref('')
 
+// Search / Filter / Sort states
+const matSearch = ref('')
+const matTypeFilter = ref('')
+const matSortOrder = ref<'ASC' | 'DESC'>('ASC')
+const asgSearch = ref('')
+const asgSortBy = ref<'dueDate' | 'title' | 'createdAt'>('dueDate')
+const asgSortOrder = ref<'ASC' | 'DESC'>('ASC')
+const subSearch = ref('')
+const subStatusFilter = ref('')
+
+// Edit tracking
+const editingMaterialId = ref<string | null>(null)
+const editingAssignmentId = ref<string | null>(null)
+
 // Forms
 const newMaterial = reactive({
   title: '',
@@ -65,38 +83,70 @@ const newMaterial = reactive({
 const newAssignment = reactive({
   title: '',
   description: '',
-  dueDate: '2026-11-30',
+  dueDate: new Date(Date.now() + 7 * 86400000).toLocaleDateString('en-CA'),
   maxScore: 100,
   submissionType: 'TEXT' as 'TEXT' | 'FILE' | 'LINK',
 })
 
-const studentSubmission = reactive({
-  assignmentId: '',
-  content: '',
-  fileUrl: '',
-})
+interface SubmissionDraft {
+  content: string
+  fileUrl: string
+}
+
+const submissionDrafts = reactive<Record<string, SubmissionDraft>>({})
+const submittingAssignmentId = ref('')
+
+function getSubmissionDraft(assignmentId: string) {
+  if (!submissionDrafts[assignmentId]) {
+    submissionDrafts[assignmentId] = { content: '', fileUrl: '' }
+  }
+  return submissionDrafts[assignmentId]
+}
 
 const gradeForm = reactive({
-  score: 90,
+  score: null as number | null,
   feedback: '',
 })
+
+async function fetchMaterials() {
+  const raw = await apiRequest<PaginatedResponse<Material> | Material[]>({
+    method: 'GET',
+    url: `/lms/courses/${courseId}/materials`,
+    params: {
+      search: matSearch.value.trim() || undefined,
+      contentType: matTypeFilter.value || undefined,
+      sortOrder: matSortOrder.value,
+    },
+  })
+  materials.value = normalizePaginated(raw).items
+}
+
+async function fetchAssignments() {
+  const raw = await apiRequest<PaginatedResponse<Assignment> | Assignment[]>({
+    method: 'GET',
+    url: `/lms/courses/${courseId}/assignments`,
+    params: {
+      search: asgSearch.value.trim() || undefined,
+      sortBy: asgSortBy.value,
+      sortOrder: asgSortOrder.value,
+    },
+  })
+  assignments.value = normalizePaginated(raw).items
+  if (assignments.value.length > 0 && !selectedAssignmentId.value) {
+    selectedAssignmentId.value = assignments.value[0].id
+  }
+}
 
 async function loadCourseData() {
   loading.value = true
   moduleLocked.value = false
   try {
-    const [crsRes, mats, asgs] = await Promise.all([
+    const [crsRes] = await Promise.all([
       apiRequest<Course | { course: Course }>({ method: 'GET', url: `/lms/courses/${courseId}` }),
-      apiRequest<Material[]>({ method: 'GET', url: `/lms/courses/${courseId}/materials` }),
-      apiRequest<Assignment[]>({ method: 'GET', url: `/lms/courses/${courseId}/assignments` }),
+      fetchMaterials(),
+      fetchAssignments(),
     ])
     course.value = 'course' in crsRes ? crsRes.course : crsRes
-    materials.value = mats
-    assignments.value = asgs
-    if (asgs.length > 0 && !selectedAssignmentId.value) {
-      selectedAssignmentId.value = asgs[0].id
-      studentSubmission.assignmentId = asgs[0].id
-    }
   } catch (err) {
     if (isModuleLockedError(err)) {
       moduleLocked.value = true
@@ -105,6 +155,9 @@ async function loadCourseData() {
     loading.value = false
   }
 }
+
+watch([matSearch, matTypeFilter, matSortOrder], fetchMaterials)
+watch([asgSearch, asgSortBy, asgSortOrder], fetchAssignments)
 
 async function loadStudentNames() {
   if (!authStore.isTeacher) return
@@ -137,11 +190,16 @@ async function loadSubmissions(assignmentId: string) {
   if (Object.keys(studentNameMap.value).length === 0) {
     await loadStudentNames()
   }
-  const raw = await apiRequest<Submission[]>({
+  const raw = await apiRequest<PaginatedResponse<Submission> | Submission[]>({
     method: 'GET',
     url: `/lms/assignments/${assignmentId}/submissions`,
+    params: {
+      search: subSearch.value.trim() || undefined,
+      status: subStatusFilter.value || undefined,
+      limit: 50,
+    },
   })
-  submissions.value = raw.map((sub) => ({
+  submissions.value = normalizePaginated(raw).items.map((sub) => ({
     ...sub,
     studentName:
       sub.studentName ||
@@ -157,13 +215,13 @@ async function loadSubmissions(assignmentId: string) {
 
 function selectSubmission(sub: Submission) {
   selectedSubmission.value = sub
-  gradeForm.score = sub.score ?? 85
+  gradeForm.score = sub.score ?? null
   gradeForm.feedback = sub.feedback ?? ''
 }
 
-watch(selectedAssignmentId, (id) => {
-  if (activeTab.value === 'grading') {
-    loadSubmissions(id)
+watch([selectedAssignmentId, subSearch, subStatusFilter], () => {
+  if (activeTab.value === 'grading' && selectedAssignmentId.value) {
+    loadSubmissions(selectedAssignmentId.value)
   }
 })
 
@@ -173,27 +231,83 @@ watch(activeTab, (tab) => {
   }
 })
 
+function startEditMaterial(mat: Material) {
+  editingMaterialId.value = mat.id
+  newMaterial.title = mat.title
+  newMaterial.contentType = mat.contentType
+  newMaterial.contentBody = mat.contentBody || ''
+  newMaterial.fileUrl = mat.fileUrl || ''
+}
+
+function cancelEditMaterial() {
+  editingMaterialId.value = null
+  newMaterial.title = ''
+  newMaterial.contentBody = ''
+  newMaterial.fileUrl = ''
+}
+
 async function addMaterial() {
   try {
-    await apiRequest<Material>({
-      method: 'POST',
-      url: `/lms/courses/${courseId}/materials`,
-      data: {
-        title: newMaterial.title,
-        contentType: newMaterial.contentType,
-        contentBody: newMaterial.contentBody.trim() || undefined,
-        fileUrl: newMaterial.fileUrl.trim() || undefined,
-        sortOrder: materials.value.length + 1,
-      },
-    })
+    if (editingMaterialId.value) {
+      await apiRequest<Material>({
+        method: 'PUT',
+        url: `/lms/materials/${editingMaterialId.value}`,
+        data: {
+          title: newMaterial.title,
+          contentType: newMaterial.contentType,
+          contentBody: newMaterial.contentBody.trim() || undefined,
+          fileUrl: newMaterial.fileUrl.trim() || undefined,
+        },
+      })
+      toast.success('Materi pembelajaran diperbarui!')
+      editingMaterialId.value = null
+    } else {
+      await apiRequest<Material>({
+        method: 'POST',
+        url: `/lms/courses/${courseId}/materials`,
+        data: {
+          title: newMaterial.title,
+          contentType: newMaterial.contentType,
+          contentBody: newMaterial.contentBody.trim() || undefined,
+          fileUrl: newMaterial.fileUrl.trim() || undefined,
+          sortOrder: materials.value.length + 1,
+        },
+      })
+      toast.success('Materi pembelajaran berhasil ditambahkan!')
+    }
     newMaterial.title = ''
     newMaterial.contentBody = ''
     newMaterial.fileUrl = ''
-    toast.success('Materi pembelajaran berhasil ditambahkan!')
-    await loadCourseData()
+    await fetchMaterials()
   } catch {
-    toast.error('Gagal menambahkan materi pembelajaran. Pastikan URL valid jika diisi.')
+    toast.error('Gagal menyimpan materi pembelajaran. Pastikan URL valid jika diisi.')
   }
+}
+
+async function deleteMaterial(mat: Material) {
+  if (!confirm(`Hapus materi "${mat.title}"?`)) return
+  try {
+    await apiRequest({ method: 'DELETE', url: `/lms/materials/${mat.id}` })
+    toast.success('Materi dihapus!')
+    await fetchMaterials()
+  } catch {
+    toast.error('Gagal menghapus materi.')
+  }
+}
+
+function startEditAssignment(asg: Assignment) {
+  editingAssignmentId.value = asg.id
+  newAssignment.title = asg.title
+  newAssignment.description = asg.description || ''
+  newAssignment.dueDate = asg.dueDate.slice(0, 10)
+  newAssignment.maxScore = asg.maxScore
+  newAssignment.submissionType = asg.submissionType
+}
+
+function cancelEditAssignment() {
+  editingAssignmentId.value = null
+  newAssignment.title = ''
+  newAssignment.description = ''
 }
 
 async function addAssignment() {
@@ -201,39 +315,70 @@ async function addAssignment() {
     const isoDue = newAssignment.dueDate.includes('T')
       ? newAssignment.dueDate
       : `${newAssignment.dueDate}T23:59:59Z`
-    await apiRequest<Assignment>({
-      method: 'POST',
-      url: `/lms/courses/${courseId}/assignments`,
-      data: {
-        ...newAssignment,
-        dueDate: isoDue,
-      },
-    })
+    if (editingAssignmentId.value) {
+      await apiRequest<Assignment>({
+        method: 'PUT',
+        url: `/lms/assignments/${editingAssignmentId.value}`,
+        data: {
+          ...newAssignment,
+          dueDate: isoDue,
+        },
+      })
+      toast.success('Tugas diperbarui!')
+      editingAssignmentId.value = null
+    } else {
+      await apiRequest<Assignment>({
+        method: 'POST',
+        url: `/lms/courses/${courseId}/assignments`,
+        data: {
+          ...newAssignment,
+          dueDate: isoDue,
+        },
+      })
+      toast.success('Tugas baru berhasil dibuat!')
+    }
     newAssignment.title = ''
     newAssignment.description = ''
-    toast.success('Tugas baru berhasil dibuat!')
-    await loadCourseData()
+    await fetchAssignments()
   } catch {
-    toast.error('Gagal membuat tugas baru')
+    toast.error('Gagal menyimpan tugas')
+  }
+}
+
+async function deleteAssignment(asg: Assignment) {
+  if (!confirm(`Hapus tugas "${asg.title}"?`)) return
+  try {
+    await apiRequest({ method: 'DELETE', url: `/lms/assignments/${asg.id}` })
+    toast.success('Tugas dihapus!')
+    await fetchAssignments()
+  } catch {
+    toast.error('Gagal menghapus tugas.')
   }
 }
 
 async function submitStudentAssignment(asgId: string) {
+  const draft = getSubmissionDraft(asgId)
+  if (!draft.content.trim() && !draft.fileUrl.trim()) {
+    toast.info('Isi jawaban atau tautan berkas sebelum mengumpulkan tugas.')
+    return
+  }
+  submittingAssignmentId.value = asgId
   try {
     const submitted = await apiRequest<Submission>({
       method: 'POST',
       url: `/lms/assignments/${asgId}/submit`,
       data: {
-        content: studentSubmission.content.trim() || undefined,
-        fileUrl: studentSubmission.fileUrl.trim() || undefined,
+        content: draft.content.trim() || undefined,
+        fileUrl: draft.fileUrl.trim() || undefined,
       },
     })
     submittedMap.value = { ...submittedMap.value, [asgId]: submitted }
-    studentSubmission.content = ''
-    studentSubmission.fileUrl = ''
+    submissionDrafts[asgId] = { content: '', fileUrl: '' }
     toast.success('Jawaban tugas Anda berhasil dikumpulkan!')
   } catch {
     toast.error('Gagal mengumpulkan jawaban tugas')
+  } finally {
+    submittingAssignmentId.value = ''
   }
 }
 
@@ -344,6 +489,30 @@ onMounted(loadCourseData)
     <SkeletonCard v-if="loading" :count="2" />
     <div v-else-if="activeTab === 'materials'" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
       <div :class="authStore.isTeacher ? 'lg:col-span-8 space-y-4' : 'lg:col-span-12 space-y-4'">
+        <!-- Materials Search & Filter -->
+        <div class="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm flex flex-wrap items-center gap-2.5">
+          <div class="relative flex-1 min-w-[180px]">
+            <Search class="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              v-model="matSearch"
+              type="search"
+              placeholder="Cari judul materi..."
+              class="w-full rounded-xl border border-slate-200 pl-9 pr-3 py-1.5 text-sm"
+            />
+          </div>
+          <select v-model="matTypeFilter" class="rounded-xl border border-slate-200 px-3 py-1.5 text-sm">
+            <option value="">Semua Tipe</option>
+            <option value="TEXT">TEXT</option>
+            <option value="VIDEO_URL">VIDEO_URL</option>
+            <option value="PDF_URL">PDF_URL</option>
+            <option value="LINK">LINK</option>
+          </select>
+          <select v-model="matSortOrder" class="rounded-xl border border-slate-200 px-3 py-1.5 text-sm">
+            <option value="ASC">Urutan Awal</option>
+            <option value="DESC">Urutan Terbaru</option>
+          </select>
+        </div>
+
         <EmptyState
           v-if="materials.length === 0"
           title="Belum Ada Materi Pembelajaran"
@@ -363,7 +532,27 @@ onMounted(loadCourseData)
               <BookOpen v-else class="h-3.5 w-3.5 text-primary" />
               {{ mat.contentType }}
             </span>
-            <span class="text-xs text-slate-400">Urutan #{{ mat.sortOrder }}</span>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-400">Urutan #{{ mat.sortOrder }}</span>
+              <button
+                v-if="authStore.isTeacher"
+                type="button"
+                @click="startEditMaterial(mat)"
+                class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-primary"
+                title="Edit Materi"
+              >
+                <Pencil class="h-3.5 w-3.5" />
+              </button>
+              <button
+                v-if="authStore.isTeacher"
+                type="button"
+                @click="deleteMaterial(mat)"
+                class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-red-600"
+                title="Hapus Materi"
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
           <h3 class="text-base font-bold text-slate-900">{{ mat.title }}</h3>
           <p v-if="mat.contentBody" class="text-sm text-slate-600 leading-relaxed whitespace-pre-line">
@@ -393,15 +582,25 @@ onMounted(loadCourseData)
         </div>
       </div>
 
-      <!-- Form Tambah Materi (Khusus Guru) -->
+      <!-- Form Tambah / Edit Materi (Khusus Guru) -->
       <div
         v-if="authStore.isTeacher"
         class="lg:col-span-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm h-fit space-y-4"
       >
-        <h3 class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-          <Plus class="h-4 w-4 text-primary" />
-          Tambah Materi Baru
-        </h3>
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+            <Plus class="h-4 w-4 text-primary" />
+            {{ editingMaterialId ? 'Edit Materi' : 'Tambah Materi Baru' }}
+          </h3>
+          <button
+            v-if="editingMaterialId"
+            type="button"
+            @click="cancelEditMaterial"
+            class="text-xs font-semibold text-slate-500 hover:underline"
+          >
+            Batal
+          </button>
+        </div>
         <form @submit.prevent="addMaterial" class="space-y-3">
           <div>
             <label class="block text-xs font-semibold text-slate-700 mb-1">Judul Materi</label>
@@ -428,7 +627,7 @@ onMounted(loadCourseData)
             type="submit"
             class="w-full rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-white hover:opacity-90"
           >
-            Publikasikan Materi
+            {{ editingMaterialId ? 'Simpan Perubahan Materi' : 'Publikasikan Materi' }}
           </button>
         </form>
       </div>
@@ -437,6 +636,28 @@ onMounted(loadCourseData)
     <!-- TAB 2: ASSIGNMENTS -->
     <div v-else-if="activeTab === 'assignments'" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
       <div :class="authStore.isTeacher ? 'lg:col-span-8 space-y-4' : 'lg:col-span-12 space-y-4'">
+        <!-- Assignments Search & Sort -->
+        <div class="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm flex flex-wrap items-center gap-2.5">
+          <div class="relative flex-1 min-w-[180px]">
+            <Search class="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              v-model="asgSearch"
+              type="search"
+              placeholder="Cari tugas..."
+              class="w-full rounded-xl border border-slate-200 pl-9 pr-3 py-1.5 text-sm"
+            />
+          </div>
+          <select v-model="asgSortBy" class="rounded-xl border border-slate-200 px-3 py-1.5 text-sm">
+            <option value="dueDate">Urutkan: Tenggat</option>
+            <option value="title">Urutkan: Judul</option>
+            <option value="createdAt">Urutkan: Dibuat</option>
+          </select>
+          <select v-model="asgSortOrder" class="rounded-xl border border-slate-200 px-3 py-1.5 text-sm">
+            <option value="ASC">ASC</option>
+            <option value="DESC">DESC</option>
+          </select>
+        </div>
+
         <EmptyState
           v-if="assignments.length === 0"
           title="Belum Ada Tugas"
@@ -455,9 +676,29 @@ onMounted(loadCourseData)
                 Batas Waktu: {{ new Date(asg.dueDate).toLocaleDateString('id-ID') }} • Skor Maks: {{ asg.maxScore }}
               </p>
             </div>
-            <span class="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
-              {{ asg.submissionType }}
-            </span>
+            <div class="flex items-center gap-1.5">
+              <span class="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                {{ asg.submissionType }}
+              </span>
+              <button
+                v-if="authStore.isTeacher"
+                type="button"
+                @click="startEditAssignment(asg)"
+                class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-primary"
+                title="Edit Tugas"
+              >
+                <Pencil class="h-3.5 w-3.5" />
+              </button>
+              <button
+                v-if="authStore.isTeacher"
+                type="button"
+                @click="deleteAssignment(asg)"
+                class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-red-600"
+                title="Hapus Tugas"
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
           <p class="text-sm text-slate-600">{{ asg.description }}</p>
 
@@ -474,40 +715,51 @@ onMounted(loadCourseData)
               {{ submittedMap[asg.id] ? 'Perbarui Jawaban Anda' : 'Kumpulkan Jawaban Anda' }}
             </p>
             <textarea
-              v-model="studentSubmission.content"
+              v-model="getSubmissionDraft(asg.id).content"
               rows="3"
               placeholder="Tuliskan jawaban esai atau ringkasan penyelesaian tugas..."
               class="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:border-primary focus:outline-none"
             />
             <div class="flex flex-col sm:flex-row gap-2">
               <input
-                v-model="studentSubmission.fileUrl"
+                v-model="getSubmissionDraft(asg.id).fileUrl"
                 type="url"
                 placeholder="Tautan PDF / Google Drive (Opsional)"
                 class="flex-1 rounded-xl border border-slate-200 px-3.5 py-2 text-sm"
               />
               <button
                 type="button"
+                :disabled="submittingAssignmentId === asg.id"
                 @click="submitStudentAssignment(asg.id)"
-                class="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90"
+                class="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
               >
                 <Send class="h-4 w-4" />
-                Kirim Tugas
+                {{ submittingAssignmentId === asg.id ? 'Mengirim...' : 'Kirim Tugas' }}
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Form Buat Tugas (Khusus Guru) -->
+      <!-- Form Buat / Edit Tugas (Khusus Guru) -->
       <div
         v-if="authStore.isTeacher"
         class="lg:col-span-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm h-fit space-y-4"
       >
-        <h3 class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-          <Plus class="h-4 w-4 text-primary" />
-          Buat Tugas Baru
-        </h3>
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+            <Plus class="h-4 w-4 text-primary" />
+            {{ editingAssignmentId ? 'Edit Tugas' : 'Buat Tugas Baru' }}
+          </h3>
+          <button
+            v-if="editingAssignmentId"
+            type="button"
+            @click="cancelEditAssignment"
+            class="text-xs font-semibold text-slate-500 hover:underline"
+          >
+            Batal
+          </button>
+        </div>
         <form @submit.prevent="addAssignment" class="space-y-3">
           <div>
             <label class="block text-xs font-semibold text-slate-700 mb-1">Judul Tugas</label>
@@ -547,14 +799,33 @@ onMounted(loadCourseData)
 
     <!-- TAB 3: SIDE-BY-SIDE GRADING WORKSPACE -->
     <div v-else-if="activeTab === 'grading'" class="space-y-4">
-      <div class="rounded-2xl border border-slate-200 bg-white p-4 flex items-center justify-between gap-4">
-        <span class="text-xs font-bold text-slate-600">Pilih Tugas untuk Dinilai:</span>
-        <select
-          v-model="selectedAssignmentId"
-          class="rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-semibold text-slate-800"
-        >
-          <option v-for="asg in assignments" :key="asg.id" :value="asg.id">{{ asg.title }}</option>
-        </select>
+      <div class="rounded-2xl border border-slate-200 bg-white p-4 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-bold text-slate-600">Pilih Tugas:</span>
+          <select
+            v-model="selectedAssignmentId"
+            class="rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-semibold text-slate-800"
+          >
+            <option v-for="asg in assignments" :key="asg.id" :value="asg.id">{{ asg.title }}</option>
+          </select>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="relative">
+            <Search class="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              v-model="subSearch"
+              type="search"
+              placeholder="Cari siswa..."
+              class="rounded-xl border border-slate-200 pl-9 pr-3 py-1.5 text-sm"
+            />
+          </div>
+          <select v-model="subStatusFilter" class="rounded-xl border border-slate-200 px-3 py-1.5 text-sm">
+            <option value="">Semua Status</option>
+            <option value="SUBMITTED">SUBMITTED</option>
+            <option value="GRADED">GRADED</option>
+            <option value="LATE">LATE</option>
+          </select>
+        </div>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">

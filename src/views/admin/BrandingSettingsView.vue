@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { CheckCircle2, Palette, RotateCcw, Sparkles } from 'lucide-vue-next'
 import { useTenantStore } from '@/stores/tenant'
 
@@ -14,6 +14,14 @@ const form = reactive({
 
 const saving = ref(false)
 const savedMessage = ref('')
+
+const hasUnsavedChanges = computed(
+  () =>
+    form.appName !== tenantStore.branding.appName ||
+    form.logoUrl !== tenantStore.branding.logoUrl ||
+    form.primaryColor !== tenantStore.branding.primaryColor ||
+    form.secondaryColor !== tenantStore.branding.secondaryColor,
+)
 
 const presets = [
   { name: 'Al-Iman Emerald', primary: '#059669', secondary: '#0284c7' },
@@ -63,12 +71,16 @@ async function saveBranding() {
         <div>
           <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
             <Palette class="h-5 w-5 text-primary" />
-            White-Label Tenant Branding
+            Identitas Visual Sekolah
           </h2>
           <p class="text-xs text-slate-500 mt-0.5">
             Sesuaikan nama aplikasi portal, logo, dan warna identitas sekolah Anda.
           </p>
         </div>
+      </div>
+
+      <div v-if="hasUnsavedChanges" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-800">
+        Perubahan sedang dipratinjau dan belum disimpan.
       </div>
 
       <div
@@ -163,7 +175,7 @@ async function saveBranding() {
             :disabled="saving"
             class="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-60 transition"
           >
-            {{ saving ? 'Menyimpan...' : 'Simpan Branding Sekolah' }}
+            {{ saving ? 'Menyimpan...' : 'Simpan Identitas Sekolah' }}
           </button>
           <button
             type="button"
@@ -171,7 +183,7 @@ async function saveBranding() {
             class="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
           >
             <RotateCcw class="h-4 w-4" />
-            Reset
+            Batalkan Perubahan
           </button>
         </div>
       </form>
@@ -182,7 +194,7 @@ async function saveBranding() {
       <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400 mb-4">
           <Sparkles class="h-3.5 w-3.5 text-primary" />
-          Live White-Label Preview
+          Pratinjau Langsung
         </span>
 
         <div class="rounded-2xl border border-slate-200 overflow-hidden shadow-sm">

@@ -10,7 +10,6 @@ import {
   Globe,
   Palette,
   LayoutGrid,
-  Blocks,
   LogOut,
   Menu,
   X,
@@ -18,6 +17,7 @@ import {
   CalendarCheck,
   KeyRound,
   ShieldAlert,
+  Users,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useTenantStore } from '@/stores/tenant'
@@ -40,6 +40,18 @@ const passwordForm = reactive({
 })
 
 const isFocusExamMode = computed(() => route.name === 'cbt-exam-runner')
+
+const roleLabel = computed(
+  () =>
+    ({
+      SCHOOL_ADMIN: 'Administrator Sekolah',
+      PRINCIPAL: 'Kepala Sekolah',
+      TEACHER: 'Guru',
+      COUNSELOR: 'Konselor BK',
+      STUDENT: 'Siswa',
+      PARENT: 'Orang Tua',
+    } as Record<string, string>)[authStore.role || ''] || 'Pengguna',
+)
 
 const userInitials = computed(() => {
   const name = authStore.user?.fullName || 'U'
@@ -111,7 +123,7 @@ const navGroups = computed<NavGroup[]>(() => {
       group: 'Pembelajaran & Ujian',
       items: [
         {
-          label: isExec ? 'Monitoring Mata Pelajaran' : 'Kursus & Materi (LMS)',
+          label: isExec ? 'Monitoring Mata Pelajaran' : 'Mata Pelajaran',
           to: '/lms/courses',
           icon: BookOpen,
           roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER', 'STUDENT'],
@@ -143,6 +155,12 @@ const navGroups = computed<NavGroup[]>(() => {
       group: 'Administrasi Sekolah',
       items: [
         {
+          label: 'Manajemen Pengguna',
+          to: '/admin/users',
+          icon: Users,
+          roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL'],
+        },
+        {
           label: 'Branding White-Label',
           to: '/admin/branding',
           icon: Palette,
@@ -153,12 +171,6 @@ const navGroups = computed<NavGroup[]>(() => {
           to: '/admin/home-layout',
           icon: LayoutGrid,
           roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL'],
-        },
-        {
-          label: 'Desainer Halaman Program',
-          to: '/admin/sdui-builder',
-          icon: Blocks,
-          roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL', 'COUNSELOR'],
         },
       ],
     },
@@ -262,7 +274,7 @@ async function handleLogout() {
       </div>
 
       <!-- Grouped Nav Links -->
-      <nav class="flex-1 overflow-y-auto overscroll-contain px-3 py-4 space-y-5">
+      <nav class="sidebar-scroll flex-1 overflow-y-auto overscroll-contain px-3 py-4 space-y-5">
         <div v-for="group in visibleNavGroups" :key="group.group" class="space-y-1">
           <p class="px-3.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
             {{ group.group }}
@@ -293,7 +305,7 @@ async function handleLogout() {
           </div>
           <div class="min-w-0 flex-1">
             <p class="text-xs font-bold text-slate-900 truncate">{{ authStore.user?.fullName }}</p>
-            <p class="text-[11px] font-medium text-primary truncate">{{ authStore.role }}</p>
+            <p class="text-xs font-medium text-primary truncate">{{ roleLabel }}</p>
           </div>
           <button
             type="button"
@@ -357,8 +369,10 @@ async function handleLogout() {
     <div
       v-if="showPasswordModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+      role="presentation"
+      @keydown.esc="showPasswordModal = false"
     >
-      <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+      <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4" role="dialog" aria-modal="true" aria-label="Ubah password">
         <div class="flex items-center justify-between">
           <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
             <KeyRound class="h-4 w-4 text-primary" />
@@ -418,3 +432,14 @@ async function handleLogout() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.sidebar-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  display: none;
+}
+</style>

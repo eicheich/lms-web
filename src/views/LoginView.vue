@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { z } from 'zod'
-import { LogIn, Building2, AlertCircle, Eye, EyeOff } from 'lucide-vue-next'
+import { AlertCircle, Eye, EyeOff, HelpCircle } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useTenantStore } from '@/stores/tenant'
 
@@ -11,158 +11,250 @@ const route = useRoute()
 const authStore = useAuthStore()
 const tenantStore = useTenantStore()
 
-const tenantSlug = ref(tenantStore.activeSlug || 'al-iman')
 const email = ref('')
 const password = ref('')
 const showPassword = ref(false)
 const errorMessage = ref('')
+const showForgotHelp = ref(false)
 
 const loginSchema = z.object({
-  tenantSlug: z.string().min(2, 'Slug sekolah minimal 2 karakter'),
   email: z.string().email('Format email tidak valid'),
   password: z.string().min(6, 'Password minimal 6 karakter'),
 })
 
-async function handleBrandingReload() {
-  errorMessage.value = ''
-  try {
-    await tenantStore.fetchPublicBranding(tenantSlug.value)
-  } catch {
-    errorMessage.value = 'Gagal memuat branding sekolah dari server API.'
-  }
-}
-
 async function submitLogin() {
   errorMessage.value = ''
-  const parsed = loginSchema.safeParse({
-    tenantSlug: tenantSlug.value,
-    email: email.value,
-    password: password.value,
-  })
+  const parsed = loginSchema.safeParse({ email: email.value.trim(), password: password.value })
   if (!parsed.success) {
-    errorMessage.value = parsed.error.issues[0]?.message || 'Input tidak valid'
+    errorMessage.value = parsed.error.issues[0]?.message || 'Periksa kembali isian Anda.'
     return
   }
 
   try {
-    await tenantStore.fetchPublicBranding(tenantSlug.value)
-    await authStore.login(parsed.data)
+    await authStore.login({ ...parsed.data, tenantSlug: tenantStore.activeSlug })
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
     router.push(redirect)
   } catch (err) {
     errorMessage.value =
       (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-      'Gagal masuk. Pastikan server API menyala serta email, password, dan slug sekolah benar.'
+      'Email atau password tidak sesuai. Silakan coba lagi.'
   }
 }
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-50 flex items-center justify-center p-4 md:p-8">
-    <div class="w-full max-w-md rounded-3xl bg-white shadow-xl border border-slate-200 p-8 md:p-10">
-      <div class="flex items-center gap-3 mb-8">
+  <main class="relative flex min-h-screen overflow-hidden bg-slate-50 px-5 py-10 sm:px-8">
+    <div class="absolute inset-x-0 top-0 h-1 bg-primary" aria-hidden="true" />
+
+    <section class="relative mx-auto flex w-full max-w-md flex-col justify-center">
+      <div class="mb-8 flex flex-col items-center text-center">
         <div
           v-if="tenantStore.branding.logoUrl"
-          class="h-11 w-11 rounded-2xl overflow-hidden border border-slate-200 shrink-0"
+          class="mb-4 h-16 w-16 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
         >
-          <img :src="tenantStore.branding.logoUrl" alt="Logo" class="h-full w-full object-cover" />
+          <img :src="tenantStore.branding.logoUrl" alt="Logo sekolah" class="h-full w-full object-contain p-1" />
         </div>
         <div
           v-else
-          class="h-11 w-11 rounded-2xl bg-primary text-white font-bold flex items-center justify-center shadow-sm text-lg"
+          class="mb-4 flex h-16 w-16 items-center justify-center rounded-xl bg-primary text-xl font-bold text-white shadow-sm"
+          aria-hidden="true"
         >
           {{ tenantStore.branding.appName.slice(0, 2).toUpperCase() }}
         </div>
-        <div>
-          <h1 class="text-lg font-bold text-slate-900">{{ tenantStore.branding.appName }}</h1>
-          <p class="text-xs text-slate-500">{{ tenantStore.branding.schoolName }}</p>
-        </div>
+        <p class="text-sm font-semibold text-slate-900">{{ tenantStore.branding.schoolName }}</p>
+        <p class="mt-1 text-sm text-slate-500">Learning Management System</p>
       </div>
 
-      <h2 class="text-2xl font-bold text-slate-900 mb-1">Masuk Portal</h2>
-      <p class="text-sm text-slate-500 mb-6">
-        Gunakan akun sekolah Anda untuk mengakses Learning Hub, CBT, dan Global Center.
-      </p>
-
-      <div
-        v-if="errorMessage"
-        class="mb-5 flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs font-medium text-red-700"
-      >
-        <AlertCircle class="h-4 w-4 shrink-0 mt-0.5" />
-        <span>{{ errorMessage }}</span>
-      </div>
-
-      <form @submit.prevent="submitLogin" class="space-y-4">
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1.5">
-            Kode Sekolah
-          </label>
-          <div class="flex gap-2">
-            <div class="relative flex-1">
-              <Building2 class="h-4 w-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                v-model="tenantSlug"
-                type="text"
-                placeholder="al-iman"
-                class="w-full rounded-xl border border-slate-200 pl-10 pr-3.5 py-2.5 text-sm focus:border-primary focus:outline-none"
-              />
-            </div>
-            <button
-              type="button"
-              @click="handleBrandingReload"
-              class="rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-            >
-              Muat Tema
-            </button>
-          </div>
+      <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <div class="mb-7">
+          <h1 class="text-2xl font-bold tracking-tight text-slate-950">Selamat datang kembali</h1>
+          <p class="mt-2 text-sm leading-6 text-slate-600">Masukkan akun sekolah Anda untuk melanjutkan.</p>
         </div>
 
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1.5">Email</label>
-          <input
-            v-model="email"
-            type="email"
-            required
-            placeholder="nama@sekolah.sch.id"
-            class="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:border-primary focus:outline-none"
-          />
-        </div>
-
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1.5">Password</label>
-          <div class="relative">
-            <input
-              v-model="password"
-              :type="showPassword ? 'text' : 'password'"
-              required
-              placeholder="••••••••"
-              class="w-full rounded-xl border border-slate-200 pl-3.5 pr-10 py-2.5 text-sm focus:border-primary focus:outline-none"
-            />
-            <button
-              type="button"
-              @click="showPassword = !showPassword"
-              class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              :title="showPassword ? 'Sembunyikan password' : 'Lihat password'"
-            >
-              <EyeOff v-if="showPassword" class="h-4 w-4" />
-              <Eye v-else class="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
-        <button
-          type="submit"
-          :disabled="authStore.loading"
-          class="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-60 transition"
+        <div
+          v-if="errorMessage"
+          id="login-error"
+          role="alert"
+          class="mb-5 flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 p-3.5 text-sm text-red-800"
         >
-          <LogIn class="h-4 w-4" />
-          {{ authStore.loading ? 'Memproses...' : 'Masuk ke Portal' }}
-        </button>
-      </form>
+          <AlertCircle class="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{{ errorMessage }}</span>
+        </div>
 
-      <p class="mt-8 text-center text-[11px] text-slate-400">
-        {{ tenantStore.branding.schoolName }} • Portal Akademik Resmi
+        <form class="space-y-5" novalidate @submit.prevent="submitLogin">
+          <div>
+            <label for="login-email" class="mb-2 block text-sm font-semibold text-slate-800">Email</label>
+            <input
+              id="login-email"
+              v-model="email"
+              type="email"
+              required
+              autocomplete="email"
+              inputmode="email"
+              placeholder="nama@sekolah.sch.id"
+              :aria-invalid="Boolean(errorMessage)"
+              :aria-describedby="errorMessage ? 'login-error' : undefined"
+              class="h-11 w-full rounded-lg border border-slate-300 bg-white px-3.5 text-sm text-slate-900 placeholder:text-slate-400 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+
+          <div>
+            <div class="mb-2 flex items-center justify-between gap-4">
+              <label for="login-password" class="block text-sm font-semibold text-slate-800">Password</label>
+              <button
+                type="button"
+                class="cursor-pointer text-xs font-semibold text-primary transition-colors hover:text-primary-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                :aria-expanded="showForgotHelp"
+                aria-controls="forgot-password-help"
+                @click="showForgotHelp = !showForgotHelp"
+              >
+                Lupa password?
+              </button>
+            </div>
+            <div class="login-password-control">
+              <input
+                id="login-password"
+                v-model="password"
+                :type="showPassword ? 'text' : 'password'"
+                required
+                autocomplete="current-password"
+                placeholder="Masukkan password"
+                :aria-invalid="Boolean(errorMessage)"
+                :aria-describedby="errorMessage ? 'login-error' : undefined"
+                class="login-password-input"
+              />
+              <button
+                type="button"
+                class="login-password-toggle"
+                :aria-label="showPassword ? 'Sembunyikan password' : 'Lihat password'"
+                :aria-pressed="showPassword"
+                @click="showPassword = !showPassword"
+              >
+                <EyeOff v-if="showPassword" class="h-[18px] w-[18px]" />
+                <Eye v-else class="h-[18px] w-[18px]" />
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="showForgotHelp"
+            id="forgot-password-help"
+            class="flex gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs leading-5 text-slate-700"
+          >
+            <HelpCircle class="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+            <p>Hubungi Tata Usaha atau Admin IT sekolah untuk mengatur ulang password akun Anda.</p>
+          </div>
+
+          <button
+            type="submit"
+            :disabled="authStore.loading"
+            class="login-submit"
+          >
+            <span
+              v-if="authStore.loading"
+              class="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+            {{ authStore.loading ? 'Memverifikasi...' : 'Masuk' }}
+          </button>
+        </form>
+      </div>
+
+      <p class="mt-7 text-center text-xs leading-5 text-slate-500">
+        © {{ new Date().getFullYear() }} {{ tenantStore.branding.schoolName }}<br class="sm:hidden" />
+        <span class="hidden sm:inline"> · </span>Portal akademik resmi
       </p>
-    </div>
-  </div>
+    </section>
+  </main>
 </template>
+
+<style scoped>
+.login-password-control {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  min-height: 44px;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  background: #fff;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.login-password-control:hover {
+  border-color: #94a3b8;
+}
+
+.login-password-control:focus-within {
+  border-color: var(--color-primary, #059669);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #059669) 20%, transparent);
+}
+
+.login-password-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+  padding: 0.625rem 0.875rem;
+  color: #0f172a;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  outline: none;
+}
+
+.login-password-input:focus-visible,
+.login-password-toggle:focus-visible {
+  outline: none;
+}
+
+.login-password-input::-ms-reveal,
+.login-password-input::-ms-clear {
+  display: none;
+}
+
+.login-password-toggle {
+  display: inline-flex;
+  width: 44px;
+  min-width: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-left: 1px solid transparent;
+  background: transparent;
+  color: #64748b;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.login-password-toggle:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.login-submit {
+  display: inline-flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: var(--color-primary, #059669);
+  padding: 0.6875rem 1.25rem;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 8%);
+  transition: filter 160ms ease, opacity 160ms ease;
+}
+
+.login-submit:hover:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.login-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+</style>

@@ -8,8 +8,53 @@
 }
 
 @layer base {
+  html {
+    color-scheme: light;
+  }
+
   body {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    color: #0f172a;
+    background: #f8fafc;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  [role='button'],
+  a,
+  select {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  select:disabled {
+    cursor: not-allowed;
+  }
+
+  :where(a, button, input, textarea, select):focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--color-primary, #059669) 35%, transparent);
+    outline-offset: 2px;
+  }
+
+  input,
+  textarea,
+  select {
+    min-height: 42px;
+  }
+
+  ::placeholder {
+    color: #94a3b8;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 

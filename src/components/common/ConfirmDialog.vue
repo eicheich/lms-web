@@ -21,8 +21,15 @@ const emit = defineEmits<{
   <div
     v-if="open"
     class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-[1px] p-4"
+    role="presentation"
+    @keydown.esc="emit('cancel')"
   >
-    <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-slate-200 space-y-4">
+    <div
+      class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-slate-200 space-y-4"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="title"
+    >
       <div class="flex items-start justify-between gap-3">
         <div class="flex items-center gap-3">
           <div
@@ -43,6 +50,7 @@ const emit = defineEmits<{
           type="button"
           @click="emit('cancel')"
           class="text-slate-400 hover:text-slate-600"
+          aria-label="Tutup dialog"
         >
           <X class="h-5 w-5" />
         </button>

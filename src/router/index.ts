@@ -33,6 +33,15 @@ const routes: RouteRecordRaw[] = [
   },
   // Admin Modules
   {
+    path: '/admin/users',
+    name: 'admin-users',
+    component: () => import('@/views/admin/UsersManagementView.vue'),
+    meta: {
+      title: 'Direktori & Manajemen Pengguna',
+      roles: ['SUPER_OWNER', 'SCHOOL_ADMIN', 'PRINCIPAL'],
+    },
+  },
+  {
     path: '/admin/branding',
     name: 'admin-branding',
     component: () => import('@/views/admin/BrandingSettingsView.vue'),

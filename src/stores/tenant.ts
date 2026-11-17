@@ -15,7 +15,7 @@ const DEFAULT_BRANDING: TenantBranding = {
 
 export const useTenantStore = defineStore('tenant', () => {
   const branding = ref<TenantBranding>({ ...DEFAULT_BRANDING })
-  const activeSlug = ref<string>(localStorage.getItem('aliman_tenant_slug') || 'al-iman')
+  const activeSlug = ref<string>(import.meta.env.VITE_TENANT_SLUG || 'al-iman')
   const loading = ref(false)
 
   function applyThemeVariables(b: TenantBranding = branding.value) {

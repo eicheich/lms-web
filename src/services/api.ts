@@ -1,5 +1,15 @@
 import axios, { type AxiosError, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios'
-import type { AuthTokens, ModuleKey, UserProfile } from '@/types/api'
+import type { AuthTokens, ModuleKey, PaginatedResponse, UserProfile } from '@/types/api'
+
+export function normalizePaginated<T>(
+  res: PaginatedResponse<T> | T[],
+): PaginatedResponse<T> {
+  if (Array.isArray(res)) {
+    return { items: res, total: res.length, page: 1, limit: res.length || 20, totalPages: 1 }
+  }
+  const totalPages = res.totalPages ?? Math.max(1, Math.ceil((res.total || 0) / (res.limit || 20)))
+  return { ...res, items: res.items ?? [], totalPages }
+}
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3000/v1'

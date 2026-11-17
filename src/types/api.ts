@@ -236,6 +236,26 @@ export interface PaginatedResponse<T> {
   total: number
   page: number
   limit: number
+  totalPages?: number
+}
+
+// Academic Users Directory & Management
+export type AcademicUserStatus = 'ACTIVE' | 'SUSPENDED'
+
+export interface AcademicUser {
+  id: string
+  fullName: string
+  email: string
+  role: UserRole
+  status: AcademicUserStatus
+  createdAt?: string
+}
+
+export interface CreateAcademicUserDto {
+  fullName: string
+  email: string
+  password: string
+  role: Exclude<UserRole, 'SUPER_OWNER'>
 }
 
 // LMS Types

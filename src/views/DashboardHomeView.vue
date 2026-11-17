@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   Award,
   BookOpen,
@@ -12,12 +12,15 @@ import {
   CalendarCheck,
   School,
   Users,
+  AlertCircle,
 } from 'lucide-vue-next'
 import { apiRequest } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useTenantStore } from '@/stores/tenant'
+import SkeletonCard from '@/components/common/SkeletonCard.vue'
 import type {
   AttendanceSummary,
+  Assignment,
   CbtExam,
   Course,
   GlobalProgram,
@@ -37,6 +40,36 @@ const schoolClasses = ref<SchoolClass[]>([])
 const activeCourses = ref<Course[]>([])
 const cbtExams = ref<CbtExam[]>([])
 const loading = ref(true)
+const assignments = ref<Array<Assignment & { courseName: string }>>([])
+
+const roleLabel = computed(
+  () =>
+    ({
+      SCHOOL_ADMIN: 'Administrator Sekolah',
+      PRINCIPAL: 'Kepala Sekolah',
+      TEACHER: 'Guru',
+      COUNSELOR: 'Konselor BK',
+      STUDENT: 'Siswa',
+      PARENT: 'Orang Tua',
+    } as Record<string, string>)[authStore.role || ''] || 'Portal Sekolah',
+)
+
+const upcomingAssignments = computed(() =>
+  [...assignments.value]
+    .filter((item) => new Date(item.dueDate).getTime() >= Date.now())
+    .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
+    .slice(0, 4),
+)
+
+const activeExams = computed(() =>
+  cbtExams.value.filter(
+    (exam) => Date.now() >= new Date(exam.startTime).getTime() && Date.now() <= new Date(exam.endTime).getTime(),
+  ),
+)
+
+const destinationCount = computed(
+  () => new Set(programs.value.map((program) => program.destination).filter(Boolean)).size,
+)
 
 function getCountryName(c?: string | { name: string } | null): string {
   if (!c) return 'Internasional'
@@ -51,10 +84,16 @@ onMounted(async () => {
       apiRequest<{ items: GlobalScholarship[] } | GlobalScholarship[]>({ method: 'GET', url: '/global/scholarships' }),
     ])
 
-    const execPromises = authStore.isSchoolExecutive
+    const shouldLoadLearningOverview =
+      authStore.isSchoolExecutive || authStore.isTeacher || authStore.isStudent
+    const execPromises = shouldLoadLearningOverview
       ? Promise.all([
-          apiRequest<AttendanceSummary>({ method: 'GET', url: '/attendance/summary' }).catch(() => null),
-          apiRequest<SchoolClass[]>({ method: 'GET', url: '/academic/classes' }).catch(() => []),
+          authStore.isSchoolExecutive
+            ? apiRequest<AttendanceSummary>({ method: 'GET', url: '/attendance/summary' }).catch(() => null)
+            : Promise.resolve(null),
+          authStore.isSchoolExecutive
+            ? apiRequest<SchoolClass[]>({ method: 'GET', url: '/academic/classes' }).catch(() => [])
+            : Promise.resolve([] as SchoolClass[]),
           apiRequest<Course[]>({ method: 'GET', url: '/lms/courses' }).catch(() => []),
           apiRequest<CbtExam[]>({ method: 'GET', url: '/cbt/exams' }).catch(() => []),
         ])
@@ -77,6 +116,18 @@ onMounted(async () => {
     schoolClasses.value = clsList
     activeCourses.value = crsList
     cbtExams.value = exmList
+    if (authStore.isTeacher || authStore.isStudent) {
+      const assignmentGroups = await Promise.all(
+        crsList.map(async (course) => {
+          const items = await apiRequest<Assignment[]>({
+            method: 'GET',
+            url: `/lms/courses/${course.id}/assignments`,
+          }).catch(() => [])
+          return items.map((item) => ({ ...item, courseName: course.name }))
+        }),
+      )
+      assignments.value = assignmentGroups.flat()
+    }
   } finally {
     loading.value = false
   }
@@ -84,13 +135,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <SkeletonCard v-if="loading" :count="3" />
+  <div v-else class="space-y-6">
     <!-- Quick Role Welcome Bar -->
     <div class="rounded-2xl bg-white border border-slate-200 p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
       <div>
         <span class="inline-flex items-center gap-1.5 rounded-full bg-primary-50 px-3 py-1 text-xs font-semibold text-primary mb-2">
           <Sparkles class="h-3.5 w-3.5" />
-          {{ authStore.role }} Workspace
+          Ruang Kerja {{ roleLabel }}
         </span>
         <h2 class="text-xl font-bold text-slate-900">
           Ahlan wa Sahlan, {{ authStore.user?.fullName }}
@@ -223,12 +275,74 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div v-if="loading" class="py-12 text-center text-sm text-slate-500">
-      Memuat tata letak beranda dinamis...
-    </div>
+    <section v-if="!loading && (authStore.isTeacher || authStore.isStudent)" class="grid grid-cols-1 gap-5 lg:grid-cols-12">
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-7">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h3 class="font-bold text-slate-900">{{ authStore.isTeacher ? 'Tugas yang Perlu Dipantau' : 'Tenggat Terdekat' }}</h3>
+            <p class="mt-1 text-sm text-slate-600">Prioritas dari mata pelajaran aktif Anda.</p>
+          </div>
+          <router-link to="/lms/courses" class="text-sm font-semibold text-primary hover:underline">Lihat semua</router-link>
+        </div>
+        <div v-if="upcomingAssignments.length" class="divide-y divide-slate-100">
+          <router-link
+            v-for="item in upcomingAssignments"
+            :key="item.id"
+            :to="`/lms/courses/${item.courseId}`"
+            class="flex items-center justify-between gap-4 py-3 hover:text-primary"
+          >
+            <div class="min-w-0">
+              <p class="truncate text-sm font-semibold text-slate-900">{{ item.title }}</p>
+              <p class="mt-0.5 text-sm text-slate-500">{{ item.courseName }}</p>
+            </div>
+            <span class="shrink-0 rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
+              {{ new Date(item.dueDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) }}
+            </span>
+          </router-link>
+        </div>
+        <p v-else class="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">Belum ada tugas dengan tenggat mendatang.</p>
+      </div>
+
+      <div class="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-5">
+        <h3 class="font-bold text-slate-900">Agenda Hari Ini</h3>
+        <router-link
+          v-if="authStore.isTeacher"
+          to="/attendance"
+          class="flex items-center gap-3 rounded-xl border border-primary/20 bg-primary-50 p-4 hover:border-primary"
+        >
+          <CalendarCheck class="h-5 w-5 text-primary" />
+          <div><p class="text-sm font-semibold text-slate-900">Isi absensi hari ini</p><p class="text-sm text-slate-600">Buka daftar kelas dan catat kehadiran.</p></div>
+        </router-link>
+        <router-link to="/cbt/exams" class="flex items-center gap-3 rounded-xl border border-slate-200 p-4 hover:border-primary">
+          <ClipboardCheck class="h-5 w-5 text-secondary" />
+          <div><p class="text-sm font-semibold text-slate-900">{{ activeExams.length }} ujian sedang aktif</p><p class="text-sm text-slate-600">{{ authStore.isStudent ? 'Buka ujian yang tersedia.' : 'Pantau jadwal dan sesi ujian.' }}</p></div>
+        </router-link>
+        <div v-if="activeExams.length === 0" class="flex items-center gap-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+          <AlertCircle class="h-5 w-5 text-slate-400" /> Tidak ada ujian aktif saat ini.
+        </div>
+      </div>
+    </section>
+
+    <section v-if="!loading && authStore.isCounselor" class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <router-link to="/global" class="rounded-2xl border border-primary/20 bg-primary-50 p-5 hover:border-primary">
+        <h3 class="font-bold text-slate-900">Antrean Konsultasi</h3><p class="mt-1 text-sm text-slate-600">Tinjau pengajuan dan hubungi siswa atau orang tua.</p>
+      </router-link>
+      <router-link to="/attendance" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:border-primary">
+        <h3 class="font-bold text-slate-900">Pantau Kehadiran</h3><p class="mt-1 text-sm text-slate-600">Temukan siswa yang membutuhkan tindak lanjut.</p>
+      </router-link>
+    </section>
+
+    <section v-if="!loading && authStore.isParent" class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <router-link to="/attendance" class="rounded-2xl border border-primary/20 bg-primary-50 p-5 hover:border-primary">
+        <h3 class="font-bold text-slate-900">Kehadiran Anak</h3><p class="mt-1 text-sm text-slate-600">Lihat riwayat dan ringkasan kehadiran terbaru.</p>
+      </router-link>
+      <router-link to="/cbt/grades" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:border-primary">
+        <h3 class="font-bold text-slate-900">Nilai & Rapor Anak</h3><p class="mt-1 text-sm text-slate-600">Pantau hasil belajar yang telah diterbitkan sekolah.</p>
+      </router-link>
+    </section>
 
     <!-- Executive Overview for PRINCIPAL / SCHOOL_ADMIN / SUPER_OWNER -->
-    <section v-if="!loading && authStore.isSchoolExecutive" class="space-y-5">
+    <section v-if="authStore.isSchoolExecutive" class="space-y-5">
       <!-- 4 KPI Cards -->
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -404,8 +518,8 @@ onMounted(async () => {
               <GraduationCap class="h-5 w-5" />
             </div>
             <div>
-              <p class="text-2xl font-extrabold text-slate-900">94%</p>
-              <p class="text-xs text-slate-500">Alumni Diterima PTN & Universitas Top Dunia</p>
+              <p class="text-2xl font-extrabold text-slate-900">{{ programs.length }}</p>
+              <p class="text-sm text-slate-600">Program global tersedia</p>
             </div>
           </div>
         </div>
@@ -415,8 +529,8 @@ onMounted(async () => {
               <Globe class="h-5 w-5" />
             </div>
             <div>
-              <p class="text-2xl font-extrabold text-slate-900">28+ Negara</p>
-              <p class="text-xs text-slate-500">Jaringan Mitra Universitas & Beasiswa</p>
+              <p class="text-2xl font-extrabold text-slate-900">{{ destinationCount || '—' }}</p>
+              <p class="text-sm text-slate-600">Destinasi program terdaftar</p>
             </div>
           </div>
         </div>
@@ -426,8 +540,8 @@ onMounted(async () => {
               <Award class="h-5 w-5" />
             </div>
             <div>
-              <p class="text-2xl font-extrabold text-slate-900">42 Siswa</p>
-              <p class="text-xs text-slate-500">Penerima Beasiswa Penuh Tahun Ini</p>
+              <p class="text-2xl font-extrabold text-slate-900">{{ scholarships.length }}</p>
+              <p class="text-sm text-slate-600">Beasiswa dapat dieksplorasi</p>
             </div>
           </div>
         </div>

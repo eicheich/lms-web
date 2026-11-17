@@ -1,15 +1,31 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
-import { CheckCircle2, Copy, Plus, School, UserPlus, Users, X, AlertCircle } from 'lucide-vue-next'
-import { apiRequest } from '@/services/api'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import {
+  AlertCircle,
+  CheckCircle2,
+  Copy,
+  Pencil,
+  Plus,
+  School,
+  Search,
+  Trash2,
+  UserMinus,
+  UserPlus,
+  Users,
+  X,
+} from 'lucide-vue-next'
+import { apiRequest, normalizePaginated } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import SkeletonCard from '@/components/common/SkeletonCard.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import PaginationBar from '@/components/common/PaginationBar.vue'
 import type {
+  AcademicUser,
   ClassStudentItem,
   ClassStudentsResponse,
   EnrollClassStudentsResponse,
+  PaginatedResponse,
   SchoolClass,
 } from '@/types/api'
 
@@ -26,6 +42,8 @@ async function copyStudentUuid(uuid: string, name: string) {
 }
 
 const classes = ref<SchoolClass[]>([])
+const teachers = ref<AcademicUser[]>([])
+const studentDirectory = ref<AcademicUser[]>([])
 const selectedClassId = ref('')
 const selectedClassInfo = ref<SchoolClass | null>(null)
 const classStudents = ref<ClassStudentItem[]>([])
@@ -33,27 +51,86 @@ const loading = ref(true)
 const feedbackMsg = ref('')
 const errorMsg = ref('')
 
-const showCreateModal = ref(false)
-const showEnrollModal = ref(false)
-const studentIdsInput = ref('')
+// Search, filter, sort, pagination
+const search = ref('')
+const gradeLevelFilter = ref('')
+const mineOnly = ref(false)
+const sortBy = ref('name')
+const sortOrder = ref<'ASC' | 'DESC'>('ASC')
+const page = ref(1)
+const limit = ref(12)
+const total = ref(0)
+const totalPages = ref(1)
 
-const newClassForm = reactive({
+const showClassModal = ref(false)
+const editingClassId = ref<string | null>(null)
+const showEnrollModal = ref(false)
+const enrollSearch = ref('')
+const selectedStudentIds = ref<string[]>([])
+
+const classForm = reactive({
   name: '',
   gradeLevel: '10',
   academicYear: '2026/2027',
   homeroomTeacherId: '',
 })
 
+const filteredDirectoryStudents = computed(() => {
+  const enrolledSet = new Set(classStudents.value.map((s) => s.studentId))
+  const q = enrollSearch.value.trim().toLowerCase()
+  return studentDirectory.value
+    .filter((u) => !enrolledSet.has(u.id))
+    .filter((u) => !q || u.fullName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
+})
+
+async function fetchUserDirectories() {
+  try {
+    const [tRes, sRes] = await Promise.all([
+      apiRequest<PaginatedResponse<AcademicUser> | AcademicUser[]>({
+        method: 'GET',
+        url: '/academic/users',
+        params: { role: 'TEACHER', status: 'ACTIVE', limit: 100 },
+      }),
+      apiRequest<PaginatedResponse<AcademicUser> | AcademicUser[]>({
+        method: 'GET',
+        url: '/academic/users',
+        params: { role: 'STUDENT', status: 'ACTIVE', limit: 100 },
+      }),
+    ])
+    teachers.value = normalizePaginated(tRes).items
+    studentDirectory.value = normalizePaginated(sRes).items
+  } catch {
+    // ignore if directory unavailable
+  }
+}
+
 async function fetchClasses() {
   loading.value = true
   errorMsg.value = ''
   try {
-    classes.value = await apiRequest<SchoolClass[]>({
+    const raw = await apiRequest<PaginatedResponse<SchoolClass> | SchoolClass[]>({
       method: 'GET',
       url: '/academic/classes',
+      params: {
+        search: search.value.trim() || undefined,
+        gradeLevel: gradeLevelFilter.value.trim() || undefined,
+        mine: authStore.isTeacher && mineOnly.value ? true : undefined,
+        sortBy: sortBy.value,
+        sortOrder: sortOrder.value,
+        page: page.value,
+        limit: limit.value,
+      },
     })
-    if (classes.value.length > 0 && !selectedClassId.value) {
+    const res = normalizePaginated(raw)
+    classes.value = res.items
+    total.value = res.total
+    totalPages.value = res.totalPages || 1
+    if (classes.value.length > 0 && !classes.value.some((c) => c.id === selectedClassId.value)) {
       selectedClassId.value = classes.value[0].id
+    } else if (classes.value.length === 0) {
+      selectedClassId.value = ''
+      selectedClassInfo.value = null
+      classStudents.value = []
     }
   } catch (err) {
     errorMsg.value =
@@ -64,6 +141,13 @@ async function fetchClasses() {
   }
 }
 
+watch([search, gradeLevelFilter, mineOnly, sortBy, sortOrder], () => {
+  page.value = 1
+  fetchClasses()
+})
+
+watch(page, fetchClasses)
+
 async function fetchClassStudents(classId: string) {
   if (!classId) return
   try {
@@ -73,6 +157,9 @@ async function fetchClassStudents(classId: string) {
     })
     selectedClassInfo.value = res.class
     classStudents.value = res.students ?? []
+    classes.value = classes.value.map((c) =>
+      c.id === classId ? { ...c, studentCount: classStudents.value.length } : c,
+    )
   } catch (err) {
     errorMsg.value =
       (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
@@ -81,53 +168,93 @@ async function fetchClassStudents(classId: string) {
 }
 
 watch(selectedClassId, (id) => {
-  fetchClassStudents(id)
+  if (id) fetchClassStudents(id)
 })
 
-async function createClass() {
+function openCreateClassModal() {
+  editingClassId.value = null
+  classForm.name = ''
+  classForm.gradeLevel = '10'
+  classForm.academicYear = '2026/2027'
+  classForm.homeroomTeacherId = ''
+  showClassModal.value = true
+}
+
+function openEditClassModal(cls: SchoolClass) {
+  editingClassId.value = cls.id
+  classForm.name = cls.name
+  classForm.gradeLevel = cls.gradeLevel
+  classForm.academicYear = cls.academicYear
+  classForm.homeroomTeacherId = cls.homeroomTeacherId || ''
+  showClassModal.value = true
+}
+
+async function saveClass() {
   errorMsg.value = ''
+  const payload = {
+    name: classForm.name.trim(),
+    gradeLevel: classForm.gradeLevel.trim(),
+    academicYear: classForm.academicYear.trim(),
+    homeroomTeacherId: classForm.homeroomTeacherId || undefined,
+  }
   try {
-    const created = await apiRequest<SchoolClass>({
-      method: 'POST',
-      url: '/academic/classes',
-      data: {
-        name: newClassForm.name,
-        gradeLevel: newClassForm.gradeLevel,
-        academicYear: newClassForm.academicYear,
-        homeroomTeacherId: newClassForm.homeroomTeacherId.trim() || undefined,
-      },
-    })
-    showCreateModal.value = false
-    newClassForm.name = ''
-    newClassForm.homeroomTeacherId = ''
-    feedbackMsg.value = `Kelas ${created.name} berhasil dibuat!`
+    if (editingClassId.value) {
+      await apiRequest<SchoolClass>({
+        method: 'PUT',
+        url: `/academic/classes/${editingClassId.value}`,
+        data: payload,
+      })
+      feedbackMsg.value = `Kelas ${payload.name} berhasil diperbarui.`
+    } else {
+      const created = await apiRequest<SchoolClass>({
+        method: 'POST',
+        url: '/academic/classes',
+        data: payload,
+      })
+      feedbackMsg.value = `Kelas ${created.name} berhasil dibuat!`
+      selectedClassId.value = created.id
+    }
+    showClassModal.value = false
     await fetchClasses()
-    selectedClassId.value = created.id
   } catch (err) {
     errorMsg.value =
       (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-      'Gagal membuat kelas baru.'
+      'Gagal menyimpan data kelas.'
   }
 }
 
+async function deleteClass(cls: SchoolClass) {
+  if (!confirm(`Arsipkan / nonaktifkan kelas "${cls.name}"?`)) return
+  try {
+    await apiRequest({ method: 'DELETE', url: `/academic/classes/${cls.id}` })
+    toast.success('Kelas Diarsipkan', cls.name)
+    await fetchClasses()
+  } catch (err) {
+    toast.error(
+      'Gagal Menghapus Kelas',
+      (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Terjadi kesalahan.',
+    )
+  }
+}
+
+function openEnrollModal() {
+  enrollSearch.value = ''
+  selectedStudentIds.value = []
+  showEnrollModal.value = true
+}
+
 async function enrollStudents() {
-  if (!selectedClassId.value) return
-  const studentIds = studentIdsInput.value
-    .split(/[\n,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-
-  if (studentIds.length === 0) return
-
+  if (!selectedClassId.value || selectedStudentIds.value.length === 0) return
   errorMsg.value = ''
   try {
     const res = await apiRequest<EnrollClassStudentsResponse>({
       method: 'POST',
       url: `/academic/classes/${selectedClassId.value}/students`,
-      data: { studentIds },
+      data: { studentIds: selectedStudentIds.value },
     })
     showEnrollModal.value = false
-    studentIdsInput.value = ''
+    selectedStudentIds.value = []
     feedbackMsg.value = `${res.enrolledCount} siswa berhasil didaftarkan (${res.skippedCount} sudah terdaftar).`
     await fetchClasses()
     await fetchClassStudents(selectedClassId.value)
@@ -138,7 +265,29 @@ async function enrollStudents() {
   }
 }
 
-onMounted(fetchClasses)
+async function removeStudent(stu: ClassStudentItem) {
+  if (!selectedClassId.value) return
+  if (!confirm(`Keluarkan ${stu.fullName} dari kelas ini?`)) return
+  try {
+    await apiRequest({
+      method: 'DELETE',
+      url: `/academic/classes/${selectedClassId.value}/students/${stu.studentId}`,
+    })
+    toast.success('Siswa Dikeluarkan', `${stu.fullName} dikeluarkan dari kelas.`)
+    await fetchClassStudents(selectedClassId.value)
+  } catch (err) {
+    toast.error(
+      'Gagal Mengeluarkan Siswa',
+      (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Terjadi kesalahan.',
+    )
+  }
+}
+
+onMounted(() => {
+  fetchClasses()
+  fetchUserDirectories()
+})
 </script>
 
 <template>
@@ -156,12 +305,48 @@ onMounted(fetchClasses)
       <button
         v-if="authStore.isAdmin"
         type="button"
-        @click="showCreateModal = true"
+        @click="openCreateClassModal"
         class="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition"
       >
         <Plus class="h-4 w-4" />
         Buat Kelas Baru
       </button>
+    </div>
+
+    <!-- Filter & Sort Bar -->
+    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm flex flex-wrap items-center gap-3">
+      <div class="relative flex-1 min-w-[200px]">
+        <Search class="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+        <input
+          v-model="search"
+          type="search"
+          placeholder="Cari nama kelas..."
+          class="w-full rounded-xl border border-slate-200 pl-9 pr-3 py-2 text-sm"
+        />
+      </div>
+      <input
+        v-model="gradeLevelFilter"
+        type="text"
+        placeholder="Tingkat (mis. 10)"
+        class="w-32 rounded-xl border border-slate-200 px-3 py-2 text-sm"
+      />
+      <select
+        :value="`${sortBy}:${sortOrder}`"
+        @change="(e) => {
+          const [f, o] = (e.target as HTMLSelectElement).value.split(':')
+          sortBy = f
+          sortOrder = o as 'ASC' | 'DESC'
+        }"
+        class="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+      >
+        <option value="name:ASC">Nama A-Z</option>
+        <option value="name:DESC">Nama Z-A</option>
+        <option value="gradeLevel:ASC">Tingkat Terendah</option>
+      </select>
+      <label v-if="authStore.isTeacher" class="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+        <input v-model="mineOnly" type="checkbox" class="rounded border-slate-300 text-primary" />
+        Kelas Saya Saja
+      </label>
     </div>
 
     <div
@@ -198,13 +383,12 @@ onMounted(fetchClasses)
     <div v-else class="grid grid-cols-1 lg:grid-cols-12 gap-6">
       <!-- Daftar Kelas -->
       <div class="lg:col-span-4 space-y-3">
-        <button
+        <div
           v-for="cls in classes"
           :key="cls.id"
-          type="button"
           @click="selectedClassId = cls.id"
           :class="[
-            'w-full text-left rounded-2xl border p-5 transition shadow-sm',
+            'w-full text-left rounded-2xl border p-5 transition shadow-sm cursor-pointer',
             selectedClassId === cls.id
               ? 'border-primary bg-primary-50/70'
               : 'border-slate-200 bg-white hover:border-primary/40',
@@ -212,21 +396,48 @@ onMounted(fetchClasses)
         >
           <div class="flex items-center justify-between mb-1.5">
             <span class="text-base font-bold text-slate-900">{{ cls.name }}</span>
-            <span class="rounded-lg bg-white border border-slate-200 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
-              Tingkat {{ cls.gradeLevel }}
-            </span>
+            <div class="flex items-center gap-1.5">
+              <span class="rounded-lg bg-white border border-slate-200 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                Tingkat {{ cls.gradeLevel }}
+              </span>
+              <button
+                v-if="authStore.isAdmin"
+                type="button"
+                @click.stop="openEditClassModal(cls)"
+                class="rounded-lg p-1 text-slate-400 hover:bg-white hover:text-primary"
+                title="Edit Kelas"
+              >
+                <Pencil class="h-3.5 w-3.5" />
+              </button>
+              <button
+                v-if="authStore.isAdmin"
+                type="button"
+                @click.stop="deleteClass(cls)"
+                class="rounded-lg p-1 text-slate-400 hover:bg-white hover:text-red-600"
+                title="Arsipkan Kelas"
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
           <p class="text-xs text-slate-500">
-            Wali Kelas: {{ cls.homeroomTeacherName || cls.homeroomTeacherId || 'Belum ditentukan' }}
+            Wali Kelas: {{ cls.homeroomTeacherName || (cls.homeroomTeacherId ? 'Sudah Ditentukan' : 'Belum ditentukan') }}
           </p>
           <div class="mt-3 flex items-center justify-between text-xs text-slate-500">
             <span>{{ cls.academicYear }}</span>
             <span class="inline-flex items-center gap-1 font-semibold text-primary">
               <Users class="h-3.5 w-3.5" />
-              {{ cls.studentCount ?? 0 }} Siswa
+              {{ cls.id === selectedClassId ? classStudents.length : (cls.studentCount ?? 0) }} Siswa
             </span>
           </div>
-        </button>
+        </div>
+        <PaginationBar
+          :page="page"
+          :total-pages="totalPages"
+          :total="total"
+          :limit="limit"
+          @update:page="page = $event"
+        />
       </div>
 
       <!-- Detail Siswa di Kelas -->
@@ -242,15 +453,15 @@ onMounted(fetchClasses)
           </div>
           <div class="flex gap-2">
             <router-link
-              to="/attendance"
+              :to="{ path: '/attendance', query: { classId: selectedClassId } }"
               class="rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
             >
-              Isi Absensi Kelas →
+              {{ authStore.isTeacher ? 'Isi Absensi Kelas →' : 'Lihat Rekap Absensi →' }}
             </router-link>
             <button
               v-if="authStore.isAdmin && selectedClassId"
               type="button"
-              @click="showEnrollModal = true"
+              @click="openEnrollModal"
               class="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-xs font-semibold text-white hover:opacity-90"
             >
               <UserPlus class="h-4 w-4" />
@@ -286,7 +497,7 @@ onMounted(fetchClasses)
                 <td class="py-3 px-4 text-xs text-slate-500">
                   {{ new Date(stu.enrolledAt).toLocaleDateString('id-ID') }}
                 </td>
-                <td class="py-3 pl-4 text-right">
+                <td class="py-3 pl-4 text-right space-x-1">
                   <button
                     type="button"
                     @click="copyStudentUuid(stu.studentId, stu.fullName)"
@@ -296,6 +507,15 @@ onMounted(fetchClasses)
                     <Copy class="h-3 w-3" />
                     Salin ID
                   </button>
+                  <button
+                    v-if="authStore.isAdmin"
+                    type="button"
+                    @click="removeStudent(stu)"
+                    class="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2.5 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50"
+                    title="Keluarkan dari kelas"
+                  >
+                    <UserMinus class="h-3 w-3" />
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -304,23 +524,27 @@ onMounted(fetchClasses)
       </div>
     </div>
 
-    <!-- Modal Buat Kelas Baru -->
+    <!-- Modal Buat / Edit Kelas -->
     <div
-      v-if="showCreateModal"
+      v-if="showClassModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+      role="presentation"
+      @keydown.esc="showClassModal = false"
     >
-      <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+      <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4" role="dialog" aria-modal="true" aria-label="Form kelas">
         <div class="flex items-center justify-between">
-          <h3 class="text-base font-bold text-slate-900">Buat Kelas Baru</h3>
-          <button @click="showCreateModal = false" class="text-slate-400 hover:text-slate-600">
+          <h3 class="text-base font-bold text-slate-900">
+            {{ editingClassId ? 'Edit Kelas' : 'Buat Kelas Baru' }}
+          </h3>
+          <button @click="showClassModal = false" class="text-slate-400 hover:text-slate-600">
             <X class="h-5 w-5" />
           </button>
         </div>
-        <form @submit.prevent="createClass" class="space-y-3">
+        <form @submit.prevent="saveClass" class="space-y-3">
           <div>
             <label class="block text-xs font-semibold text-slate-700 mb-1">Nama Kelas</label>
             <input
-              v-model="newClassForm.name"
+              v-model="classForm.name"
               required
               type="text"
               placeholder="Contoh: X-IPA-1"
@@ -330,24 +554,27 @@ onMounted(fetchClasses)
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-xs font-semibold text-slate-700 mb-1">Tingkat</label>
-              <input v-model="newClassForm.gradeLevel" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              <input v-model="classForm.gradeLevel" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-700 mb-1">Tahun Ajaran</label>
-              <input v-model="newClassForm.academicYear" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              <input v-model="classForm.academicYear" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
             </div>
           </div>
           <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">ID Wali Kelas (Opsional)</label>
-            <input
-              v-model="newClassForm.homeroomTeacherId"
-              type="text"
-              placeholder="Masukkan ID Guru jika sudah ada"
-              class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono"
-            />
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Wali Kelas (Opsional)</label>
+            <select
+              v-model="classForm.homeroomTeacherId"
+              class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            >
+              <option value="">— Belum ditentukan —</option>
+              <option v-for="t in teachers" :key="t.id" :value="t.id">
+                {{ t.fullName }} ({{ t.email }})
+              </option>
+            </select>
           </div>
           <div class="pt-2 flex justify-end gap-2">
-            <button type="button" @click="showCreateModal = false" class="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600">
+            <button type="button" @click="showClassModal = false" class="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600">
               Batal
             </button>
             <button type="submit" class="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90">
@@ -362,37 +589,63 @@ onMounted(fetchClasses)
     <div
       v-if="showEnrollModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+      role="presentation"
+      @keydown.esc="showEnrollModal = false"
     >
-      <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+      <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4" role="dialog" aria-modal="true" aria-label="Daftarkan siswa ke kelas">
         <div class="flex items-center justify-between">
           <h3 class="text-base font-bold text-slate-900">Daftarkan Siswa ke {{ selectedClassInfo?.name }}</h3>
           <button @click="showEnrollModal = false" class="text-slate-400 hover:text-slate-600">
             <X class="h-5 w-5" />
           </button>
         </div>
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1">
-            Daftar ID Siswa (pisahkan dengan baris baru atau koma)
-          </label>
-          <textarea
-            v-model="studentIdsInput"
-            rows="4"
-            placeholder="11111111-1111-1111-1111-111111111111&#10;22222222-2222-2222-2222-222222222222"
-            class="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-mono"
-          />
+        <div class="space-y-3">
+          <div class="relative">
+            <Search class="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              v-model="enrollSearch"
+              type="search"
+              placeholder="Cari nama atau email siswa..."
+              class="w-full rounded-xl border border-slate-200 pl-9 pr-3 py-2 text-sm"
+            />
+          </div>
+          <div class="max-h-60 overflow-y-auto divide-y divide-slate-100 rounded-xl border border-slate-200">
+            <label
+              v-for="stu in filteredDirectoryStudents"
+              :key="stu.id"
+              class="flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 cursor-pointer"
+            >
+              <input
+                v-model="selectedStudentIds"
+                type="checkbox"
+                :value="stu.id"
+                class="rounded border-slate-300 text-primary"
+              />
+              <div class="min-w-0">
+                <p class="text-xs font-bold text-slate-900 truncate">{{ stu.fullName }}</p>
+                <p class="text-[11px] text-slate-500 truncate">{{ stu.email }}</p>
+              </div>
+            </label>
+            <p v-if="filteredDirectoryStudents.length === 0" class="p-4 text-center text-xs text-slate-500">
+              Tidak ada siswa tersedia untuk didaftarkan.
+            </p>
+          </div>
         </div>
-        <div class="pt-2 flex justify-end gap-2">
-          <button type="button" @click="showEnrollModal = false" class="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600">
-            Batal
-          </button>
-          <button
-            type="button"
-            :disabled="!studentIdsInput.trim()"
-            @click="enrollStudents"
-            class="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
-          >
-            Daftarkan Siswa
-          </button>
+        <div class="pt-2 flex justify-between items-center">
+          <span class="text-xs text-slate-500">{{ selectedStudentIds.length }} siswa dipilih</span>
+          <div class="flex gap-2">
+            <button type="button" @click="showEnrollModal = false" class="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600">
+              Batal
+            </button>
+            <button
+              type="button"
+              :disabled="selectedStudentIds.length === 0"
+              @click="enrollStudents"
+              class="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+            >
+              Daftarkan Siswa
+            </button>
+          </div>
         </div>
       </div>
     </div>

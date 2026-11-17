@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Award, Printer, Search } from 'lucide-vue-next'
-import { apiRequest, isModuleLockedError } from '@/services/api'
+import { apiRequest, isModuleLockedError, normalizePaginated } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useTenantStore } from '@/stores/tenant'
 import { useToast } from '@/composables/useToast'
@@ -15,6 +15,7 @@ import type {
   ClassStudentsResponse,
   Course,
   GradeRecord,
+  PaginatedResponse,
   ReportCardRecord,
   SchoolClass,
   StudentGradeItem,
@@ -36,6 +37,12 @@ const selectedStudentId = ref(
 const manualStudentId = ref('')
 
 const gradeSummary = ref<StudentGradeSummary | null>(null)
+const reportCards = ref<ReportCardRecord[]>([])
+const rcSearch = ref('')
+const rcStatusFilter = ref('')
+const rcPage = ref(1)
+const rcTotal = ref(0)
+const rcTotalPages = ref(1)
 const moduleLocked = ref(false)
 const loading = ref(false)
 const saving = ref(false)
@@ -44,9 +51,15 @@ const showConfirmFinalize = ref(false)
 const finalizeForm = reactive({
   academicYear: '2026/2027',
   semester: 1,
-  summaryGpa: 3.85,
-  sikap: 'Sangat Baik',
-  catatan: 'Aktif berpartisipasi dalam diskusi dan ujian CBT.',
+  summaryGpa: null as number | null,
+  sikap: '',
+  catatan: '',
+})
+
+const emptyGradeDescription = computed(() => {
+  if (authStore.isStudent) return 'Nilai tugas dan ujian yang sudah diproses akan tampil di halaman ini.'
+  if (authStore.isParent) return 'Rapor anak akan tampil setelah sekolah menyelesaikan proses penilaian.'
+  return 'Pilih kelas dan siswa untuk menampilkan kompilasi nilai serta rapor akademik.'
 })
 
 function computeLetterGrade(score: number): string {
@@ -127,6 +140,8 @@ async function loadStudentsInClass(classId: string) {
 }
 
 watch(selectedClassId, (id) => {
+  selectedStudentId.value = ''
+  gradeSummary.value = null
   loadStudentsInClass(id)
 })
 
@@ -193,6 +208,60 @@ function compileGradesFromArray(records: GradeRecord[]): StudentGradeSummary {
   }
 }
 
+async function loadReportCardsForStudent() {
+  try {
+    if (authStore.isStudent) {
+      const res = await apiRequest<PaginatedResponse<ReportCardRecord> | ReportCardRecord[]>({
+        method: 'GET',
+        url: '/cbt/report-cards/my',
+      })
+      const items = normalizePaginated(res).items
+      reportCards.value = items
+      if (gradeSummary.value && !gradeSummary.value.reportCard && items.length > 0) {
+        gradeSummary.value.reportCard = items[0]
+      }
+    } else if (authStore.isParent) {
+      const res = await apiRequest<PaginatedResponse<ReportCardRecord> | ReportCardRecord[]>({
+        method: 'GET',
+        url: '/cbt/report-cards/children',
+        params: { studentId: selectedStudentId.value || undefined },
+      })
+      const items = normalizePaginated(res).items
+      reportCards.value = items
+      if (gradeSummary.value && !gradeSummary.value.reportCard && items.length > 0) {
+        gradeSummary.value.reportCard = items[0]
+      }
+    } else if (authStore.isTeacherOrAdmin) {
+      const res = await apiRequest<PaginatedResponse<ReportCardRecord> | ReportCardRecord[]>({
+        method: 'GET',
+        url: '/cbt/report-cards',
+        params: {
+          search: rcSearch.value.trim() || undefined,
+          status: rcStatusFilter.value || undefined,
+          page: rcPage.value,
+          limit: 10,
+        },
+      })
+      const normalized = normalizePaginated(res)
+      reportCards.value = normalized.items
+      rcTotal.value = normalized.total
+      rcTotalPages.value = normalized.totalPages || 1
+      const matched = normalized.items.find((r) => r.studentId === selectedStudentId.value)
+      if (gradeSummary.value && !gradeSummary.value.reportCard && matched) {
+        gradeSummary.value.reportCard = matched
+      }
+    }
+  } catch {
+    // ignore if unavailable
+  }
+}
+
+watch([rcSearch, rcStatusFilter], () => {
+  rcPage.value = 1
+  loadReportCardsForStudent()
+})
+watch(rcPage, loadReportCardsForStudent)
+
 async function loadGrades() {
   if (!selectedStudentId.value) {
     gradeSummary.value = null
@@ -211,6 +280,7 @@ async function loadGrades() {
     } else {
       gradeSummary.value = raw
     }
+    await loadReportCardsForStudent()
   } catch (err) {
     if (isModuleLockedError(err)) {
       moduleLocked.value = true
@@ -272,6 +342,8 @@ onMounted(async () => {
   await loadStudentSources()
   if (selectedStudentId.value) {
     await loadGrades()
+  } else if (authStore.isTeacherOrAdmin) {
+    await loadReportCardsForStudent()
   }
 })
 </script>
@@ -343,7 +415,7 @@ onMounted(async () => {
     <EmptyState
       v-else-if="!gradeSummary"
       title="Belum Ada Data Nilai Dipilih"
-      description="Pilih siswa dari daftar kelas atau masukkan ID siswa untuk menampilkan kompilasi nilai dan rapor akademik."
+      :description="emptyGradeDescription"
       :icon="Award"
     />
 
@@ -428,7 +500,7 @@ onMounted(async () => {
       <form @submit.prevent="showConfirmFinalize = true" class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">Tahun Ajaran</label>
-          <input v-model="finalizeForm.academicYear" type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          <input v-model="finalizeForm.academicYear" required type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
         </div>
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">Semester</label>
@@ -439,15 +511,15 @@ onMounted(async () => {
         </div>
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">Summary GPA</label>
-          <input v-model.number="finalizeForm.summaryGpa" step="0.01" type="number" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          <input v-model.number="finalizeForm.summaryGpa" required min="0" max="4" step="0.01" type="number" placeholder="0.00–4.00" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
         </div>
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">Predikat Sikap</label>
-          <input v-model="finalizeForm.sikap" type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          <input v-model="finalizeForm.sikap" required type="text" placeholder="Contoh: Sangat Baik" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
         </div>
         <div class="md:col-span-3">
           <label class="block text-xs font-semibold text-slate-700 mb-1">Catatan Evaluasi Akhir</label>
-          <input v-model="finalizeForm.catatan" type="text" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          <input v-model="finalizeForm.catatan" required type="text" placeholder="Tulis evaluasi berdasarkan hasil belajar siswa" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
         </div>
         <div class="flex items-end">
           <button
